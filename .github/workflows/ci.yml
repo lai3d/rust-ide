@@ -19,11 +19,15 @@ jobs:
           rustup default stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
+      - name: Allow debugging (lldb-dap)
+        run: sudo DevToolsSecurity -enable || true
+
       - name: Toolchain
         run: |
           swift --version
           cargo --version
           rust-analyzer --version
+          xcrun -f lldb-dap
 
       - name: Build
         run: swift build

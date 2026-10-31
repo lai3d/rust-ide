@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
-        Workspace.allOpen.forEach { $0.stopDebugging() }  // ends dlv and the debuggees
+        Workspace.allOpen.forEach { $0.stopDebugging() }  // ends lldb-dap and the debuggees
     }
 }
 

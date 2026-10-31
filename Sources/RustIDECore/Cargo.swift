@@ -104,3 +104,58 @@ public enum OutputReferences {
         }
     }
 }
+
+/// An executable cargo produced (`--message-format=json` → `compiler-artifact` with `executable`).
+public struct CargoArtifact: Sendable, Hashable {
+    public var targetName: String
+    public var kinds: [String]
+    /// Built with the test harness (`cargo test --no-run`).
+    public var isTest: Bool
+    public var executable: String
+
+    /// Executables from cargo's JSON message stream (non-JSON lines are ignored).
+    public static func executables(in lines: [String]) -> [CargoArtifact] {
+        lines.compactMap { line in
+            guard line.hasPrefix("{"), let json = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
+                  json["reason"]?.stringValue == "compiler-artifact",
+                  let executable = json["executable"]?.stringValue,
+                  let name = json["target"]?["name"]?.stringValue else { return nil }
+            return CargoArtifact(targetName: name,
+                                 kinds: json["target"]?["kind"]?.arrayValue?.compactMap(\.stringValue) ?? [],
+                                 isTest: json["profile"]?["test"]?.boolValue ?? false,
+                                 executable: executable)
+        }
+    }
+}
+
+/// Settings that make LLDB show Rust values well: rustc's own formatters
+/// (`<sysroot>/lib/rustlib/etc/lldb_lookup.py` + `lldb_commands`, what `rust-lldb` loads).
+public enum RustLLDB {
+    public static func initCommands(sysroot: String?) -> [String] {
+        guard let sysroot else { return [] }
+        let etc = sysroot + "/lib/rustlib/etc"
+        guard FileManager.default.fileExists(atPath: etc + "/lldb_lookup.py") else { return [] }
+        var commands = ["command script import \"\(etc)/lldb_lookup.py\""]
+        if FileManager.default.fileExists(atPath: etc + "/lldb_commands") {
+            commands.append("command source -s 0 \"\(etc)/lldb_commands\"")
+        }
+        return commands
+    }
+
+    /// `rustc --print sysroot` (blocking).
+    public static func sysroot() -> String? {
+        guard let rustc = ToolLocator.find("rustc") else { return nil }
+        let process = Process()
+        process.executableURL = rustc
+        process.arguments = ["--print", "sysroot"]
+        process.environment = ToolLocator.environment()
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return process.terminationStatus == 0 && !path.isEmpty ? path : nil
+    }
+}

@@ -1836,7 +1836,7 @@ final class Workspace {
         let key = Self.key(for: document.url)
         let current = breakpointConditions[key]?[line + 1] ?? ""
         guard let condition = Prompt.text(title: "Breakpoint Condition",
-                                          message: "Stop at line \(line + 1) only when this Go expression is true.",
+                                          message: "Stop at line \(line + 1) only when this expression is true (LLDB syntax, e.g. i == 3).",
                                           initial: current, confirm: "Done", allowEmpty: true) else { return }
         breakpoints[key, default: []].insert(line + 1)
         breakpointConditions[key, default: [:]][line + 1] = condition.isEmpty ? nil : condition
@@ -1879,76 +1879,124 @@ final class Workspace {
         }
     }
 
-    /// Debugs the test at the caret (in a _test.go file), else the active file's package (or the root).
+    /// Debugs the #[test] at the caret, else the selected run configuration (else the default binary).
     func startDebugging() {
-        guard let rootURL else { return }
+        guard rootURL != nil else { return }
         if let document = activeDocument, let name = testAtCaret(in: document) {
-            debug(test: name, in: document.url.deletingLastPathComponent())
+            debug(test: name, in: document.url)
         } else if let config = selectedRunConfiguration {
             debug(configuration: config)
-        } else if let document = activeDocument, document.isRust {
-            debug(package: document.url.deletingLastPathComponent())
         } else {
-            debug(package: rootURL)
+            launchDebugger(title: rootURL?.lastPathComponent ?? "program", build: ["build"],
+                           pick: { $0.last { !$0.isTest } }, arguments: [], environment: [:])
         }
-    }
-
-    func debug(package dir: URL) {
-        launchDebugger(title: dir.lastPathComponent, directory: dir, launch: [
-            "request": "launch", "mode": "debug", "program": .string(Self.key(for: dir)),
-            "cwd": .string(Self.key(for: dir)), "outputMode": "remote",
-        ])
     }
 
     func debug(configuration config: RunConfiguration) {
-        guard let rootURL else { return }
-        let dir = Self.key(for: rootURL.appendingPathComponent(config.package == "." ? "" : config.package))
-        launchDebugger(title: config.name, directory: URL(fileURLWithPath: dir), launch: [
-            "request": "launch", "mode": "debug", "program": .string(dir),
-            "cwd": .string(Self.key(for: rootURL)), "outputMode": "remote",
-            "args": .array(config.argumentList.map(JSONValue.string)),
-            "env": .object(config.environmentVariables.mapValues(JSONValue.string)),
-        ])
+        launchDebugger(title: config.name, build: ["build"] + config.cargoTargetArguments,
+                       pick: { artifacts in
+                           artifacts.last { !$0.isTest && $0.targetName == config.target } ?? artifacts.last { !$0.isTest }
+                       },
+                       arguments: config.argumentList, environment: config.environmentVariables)
     }
 
-    func debug(test name: String, in dir: URL) {
-        launchDebugger(title: name, directory: dir, launch: [
-            "request": "launch", "mode": "test", "program": .string(Self.key(for: dir)),
-            "cwd": .string(Self.key(for: dir)), "outputMode": "remote",
-            "args": ["-test.run", .string("^\(NSRegularExpression.escapedPattern(for: name))$"), "-test.v"],
-        ])
+    /// Builds the test binary for `file`'s target and runs just `name` under the debugger.
+    func debug(test name: String, in file: URL) {
+        var build = ["test", "--no-run"]
+        if let metadata = cargoMetadata { build += RustTestFinder.targetArguments(forFile: Self.key(for: file), in: metadata) }
+        launchDebugger(title: name, build: build, pick: { $0.last { $0.isTest } },
+                       arguments: [name, "--exact", "--nocapture", "--test-threads=1"], environment: [:])
     }
 
-    private func launchDebugger(title: String, directory: URL, launch: JSONValue) {
-        guard rootURL != nil else { return }
-        // Build the debug binary outside the project (Delve defaults to the package folder).
-        var launch = launch
-        if case .object(var config) = launch {
-            config["output"] = .string(FileManager.default.temporaryDirectory
-                .appendingPathComponent("goide-debug-\(UUID().uuidString)").path)
-            launch = .object(config)
-        }
+    /// `cargo <build> --message-format=json-render-diagnostics`, then lldb-dap on the executable `pick` chooses.
+    private func launchDebugger(title: String, build: [String], pick: @escaping @MainActor ([CargoArtifact]) -> CargoArtifact?,
+                                arguments: [String], environment: [String: String]) {
+        guard let rootURL, !isRunning else { return }
         if let session = debugSession, session.isActive { return }
-        guard let dlv = ToolLocator.find("dlv") else {
-            output = "dlv not found. Install it with:\n  go install github.com/go-delve/delve/cmd/dlv@latest\n"
+        guard let cargo = ToolLocator.find("cargo") else {
+            output = "cargo not found. Install Rust from https://rustup.rs\n"
             bottomTab = .output
             return
         }
         saveAll()
+        let buildArguments = build + ["--message-format=json-render-diagnostics"]
+        output = "Debugging \(title)…\n$ cargo \(build.joined(separator: " "))\n"
+        bottomTab = .output
+        isRunning = true
+        Task {
+            let artifacts = await buildArtifacts(cargo: cargo, arguments: buildArguments, in: rootURL)
+            isRunning = false
+            runProcess = nil
+            guard let artifacts else { return appendOutput("\nBuild failed: nothing to debug.\n") }
+            guard let program = pick(artifacts) else { return appendOutput("\nNo executable to debug in the build output.\n") }
+            let (adapter, sysroot) = await Task.detached { (DAPClient.locateLLDBDAP(), RustLLDB.sysroot()) }.value
+            guard let adapter else {
+                output += "\nlldb-dap not found. Install Xcode or the Command Line Tools (xcode-select --install), "
+                    + "or Homebrew's llvm, or set its path in Settings ▸ Tools.\n"
+                return
+            }
+            startSession(title: title, adapter: adapter, directory: rootURL, launch: [
+                "program": .string(program.executable),
+                "args": .array(arguments.map(JSONValue.string)),
+                "cwd": .string(Self.key(for: rootURL)),
+                "env": .array(environment.sorted { $0.key < $1.key }.map { .string("\($0.key)=\($0.value)") }),
+                "initCommands": .array(RustLLDB.initCommands(sysroot: sysroot).map(JSONValue.string)),
+                "stopOnEntry": false,
+            ])
+        }
+    }
+
+    /// Runs a cargo build with JSON messages: rendered diagnostics stream to Output, artifacts are returned
+    /// (nil if the build failed or was stopped).
+    private func buildArtifacts(cargo: URL, arguments: [String], in root: URL) async -> [CargoArtifact]? {
+        let process = Process()
+        process.executableURL = cargo
+        process.arguments = arguments
+        process.currentDirectoryURL = root
+        process.environment = ToolLocator.environment().merging(["CARGO_TERM_COLOR": "never"]) { $1 }
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        err.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            let text = String(decoding: data, as: UTF8.self)
+            Task { @MainActor in self.appendOutput(text) }
+        }
+        let collected = LineCollector()
+        out.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            collected.append(data)
+        }
+        let status: Int32 = await withCheckedContinuation { continuation in
+            process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+            do {
+                try process.run()
+                runProcess = process
+            } catch {
+                appendOutput("Failed to start cargo: \(error.localizedDescription)\n")
+                continuation.resume(returning: -1)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(80))  // let the last output land
+        return status == 0 ? CargoArtifact.executables(in: collected.lines) : nil
+    }
+
+    private func startSession(title: String, adapter: URL, directory: URL, launch: JSONValue) {
         let session = DebugSession(title: title)
         session.onLocation = { [weak self] location in
             guard let self else { return }
             executionLocation = location
-            if let location {
+            if let location, FileManager.default.fileExists(atPath: location.path) {
                 navigate(to: URL(fileURLWithPath: location.path), position: TextPosition(line: location.line - 1, character: 0))
             }
         }
         session.onOutput = { [weak self] text in self?.appendOutput(text) }
         debugSession = session
-        output = "Debugging \(title)…\n"
         bottomTab = .debug
         let specs = Dictionary(uniqueKeysWithValues: breakpoints.keys.map { ($0, breakpointSpec($0)) })
-        Task { await session.start(dlv: dlv, directory: directory, launch: launch, breakpoints: specs) }
+        Task { await session.start(adapter: adapter, directory: directory, launch: launch, breakpoints: specs) }
     }
 
     func stopDebugging() {
@@ -2041,6 +2089,18 @@ final class Workspace {
         }
         return (files.first { $0.name == "main.rs" } ?? files.first { $0.url.pathExtension == "rs" }
             ?? files.first { $0.name == "Cargo.toml" })?.url
+    }
+}
+
+/// Accumulates a byte stream (thread-safe) and splits it into lines at the end.
+final class LineCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) { lock.withLock { data.append(chunk) } }
+
+    var lines: [String] {
+        lock.withLock { String(decoding: data, as: UTF8.self).components(separatedBy: "\n") }
     }
 }
 

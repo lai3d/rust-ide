@@ -555,3 +555,78 @@ struct RustAnalyzerFixture {
         await workspace.shutdown()
     }
 }
+
+@MainActor
+@Suite struct WorkspaceDebuggerTests {
+    /// Needs lldb-dap and macOS developer mode (else launching would pop an authorization dialog).
+    nonisolated static var enabled: Bool {
+        guard DAPClient.locateLLDBDAP() != nil, RustIDECore.ToolLocator.find("cargo") != nil else { return false }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/DevToolsSecurity")
+        process.arguments = ["-status"]
+        let out = Pipe()
+        process.standardOutput = out
+        guard (try? process.run()) != nil else { return false }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        return text.contains("enabled") && !text.contains("disabled")
+    }
+
+    @Test(.enabled(if: enabled), .timeLimit(.minutes(3)))
+    func debugsARunConfigurationAndATest() async throws {
+        let main = """
+            fn total(n: u32) -> u32 {
+                let mut sum = 0;
+                for i in 0..n {
+                    sum += i;
+                }
+                sum
+            }
+
+            fn main() {
+                let n = 5;
+                println!("sum {}", total(n));
+            }
+
+            #[test]
+            fn totals() {
+                let expected = 10;
+                assert_eq!(total(5), expected);
+            }
+
+            """
+        let fixture = try RustAnalyzerFixture(["src/main.rs": main])
+        defer { fixture.remove() }
+        let workspace = Workspace()
+        await workspace.openFolder(fixture.dir)
+        let document = try #require(workspace.activeDocument)
+        func waitFor(_ condition: () -> Bool) async throws {
+            for _ in 0..<1200 where !condition() { try await Task.sleep(for: .milliseconds(100)) }
+        }
+
+        // Run configuration: stop at `sum += i` when i == 3.
+        workspace.setBreakpointConditionForTesting("i == 3", in: document, line: 3)
+        workspace.debug(configuration: try #require(workspace.selectedRunConfiguration))
+        try await waitFor { workspace.debugSession?.state == .stopped || workspace.debugSession?.state == .terminated }
+        let session = try #require(workspace.debugSession)
+        #expect(session.state == .stopped, "\(workspace.output)")
+        #expect(workspace.executionLine(for: document) == 3)
+        try await waitFor { !(session.scopes.first?.children ?? []).isEmpty }
+        let locals = session.scopes.first?.children ?? []
+        #expect(locals.first { $0.name == "i" }?.value == "3", "\(locals.map { "\($0.name)=\($0.value)" })")
+        #expect(await workspace.evaluate("sum") == "3")  // 0+1+2
+        workspace.clearBreakpoints()
+        session.resume()
+        try await waitFor { session.state == .terminated }
+        #expect(workspace.output.contains("sum 10"))
+
+        // A #[test]: built with cargo test --no-run, run alone under the debugger.
+        workspace.toggleBreakpoint(in: document, line: 16)  // assert_eq!
+        workspace.debug(test: "totals", in: document.url)
+        try await waitFor { workspace.debugSession !== session && workspace.debugSession?.state == .stopped }
+        #expect(workspace.executionLine(for: document) == 16, "\(workspace.output)")
+        workspace.stopDebugging()
+        try await waitFor { !workspace.isDebugging }
+        await workspace.shutdown()
+    }
+}

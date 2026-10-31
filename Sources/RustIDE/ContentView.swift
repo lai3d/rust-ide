@@ -45,7 +45,7 @@ struct ContentView: View {
                 Button { workspace.startDebugging() } label: {
                     Label("Debug", systemImage: "ladybug")
                 }
-                .help("Debug with Delve (⌥⌘R)")
+                .help("Debug with LLDB (⌥⌘R)")
                 .disabled(workspace.isDebugging)
                 Button { workspace.stopRun() } label: {
                     Label("Stop", systemImage: "stop.fill")

@@ -27,7 +27,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     func start() {
         hasExited = false
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        var environment = ToolLocator.environment()  // PATH includes go, gopls, dlv
+        var environment = ToolLocator.environment()  // PATH includes cargo, rustc, rust-analyzer
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
         environment["TERM_PROGRAM"] = "RustIDE"

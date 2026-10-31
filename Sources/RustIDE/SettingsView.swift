@@ -59,7 +59,7 @@ private struct ToolsSettingsTab: View {
             Section {
                 ToolPathRow(name: "cargo", hint: "https://rustup.rs")
                 ToolPathRow(name: "rust-analyzer", hint: "rustup component add rust-analyzer")
-                ToolPathRow(name: "dlv", hint: "go install github.com/go-delve/delve/cmd/dlv@latest")
+                ToolPathRow(name: "lldb-dap", hint: "Ships with Xcode / Command Line Tools (found via xcrun)")
             } footer: {
                 Text("Leave empty to search PATH, $CARGO_HOME/bin, ~/.cargo/bin and Homebrew.")
                     .font(.caption).foregroundStyle(.secondary)
