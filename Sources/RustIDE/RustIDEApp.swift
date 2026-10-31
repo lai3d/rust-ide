@@ -251,13 +251,18 @@ struct RustIDECommands: Commands {
                 .keyboardShortcut("d", modifiers: [.option, .command])
                 .disabled(workspace.activeDocument.map { workspace.gitBase(for: $0) == nil } ?? true)
             }
-            CommandMenu("Go") {
+            CommandMenu("Cargo") {
                 Button("Run") { workspace.runSelectedConfiguration() }
                     .keyboardShortcut("r")
                 Button("Edit Run Configurations…") { workspace.isEditingRunConfigurations = true }
                     .disabled(workspace.rootURL == nil)
-                Button("Build") { workspace.runGo(["build", "./..."]) }
+                Button("Build") { workspace.buildProject() }
                     .keyboardShortcut("b")
+                Button("Check (cargo check)") { workspace.runCargo(["check", "--workspace", "--all-targets"]) }
+                    .keyboardShortcut("b", modifiers: [.command, .shift])
+                Button("Clippy (cargo clippy)") { workspace.runCargo(["clippy", "--workspace", "--all-targets"]) }
+                    .keyboardShortcut("v", modifiers: [.control, .option, .command])
+                Divider()
                 Button("Test All") { workspace.runTests(.all) }
                     .keyboardShortcut("u")
                 Button("Test Package") { workspace.runActivePackageTests() }
@@ -272,14 +277,14 @@ struct RustIDECommands: Commands {
                 Button("Terminal") { workspace.showTerminal() }
                     .keyboardShortcut("`", modifiers: .control)
                 Divider()
-                Button("Vet (go vet ./...)") { workspace.runGo(["vet", "./..."]) }
-                    .keyboardShortcut("v", modifiers: [.control, .option, .command])
-                Button("Generate (go generate ./...)") { workspace.runGo(["generate", "./..."]) }
-                Menu("Modules") {
-                    Button("Tidy (go mod tidy)") { workspace.runGo(["mod", "tidy"]) }
-                    Button("Update Dependencies (go get -u ./...)") { workspace.runGo(["get", "-u", "./..."]) }
-                    Button("Download (go mod download)") { workspace.runGo(["mod", "download"]) }
-                    Button("Verify (go mod verify)") { workspace.runGo(["mod", "verify"]) }
+                Button("Format Project (cargo fmt)") { workspace.runCargo(["fmt", "--all"]) }
+                Button("Build Docs (cargo doc --open)") { workspace.runCargo(["doc", "--no-deps", "--open"]) }
+                Button("Clean (cargo clean)") { workspace.runCargo(["clean"]) }
+                Menu("Dependencies") {
+                    Button("Update (cargo update)") { workspace.runCargo(["update"]) }
+                    Button("Fetch (cargo fetch)") { workspace.runCargo(["fetch"]) }
+                    Button("Tree (cargo tree)") { workspace.runCargo(["tree"]) }
+                    Button("Outdated Lock Check (cargo update --dry-run)") { workspace.runCargo(["update", "--dry-run"]) }
                 }
                 .disabled(workspace.rootURL == nil)
                 Divider()

@@ -29,14 +29,14 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { workspace.runGo(["build", "./..."]) } label: {
+                Button { workspace.buildProject() } label: {
                     Label("Build", systemImage: "hammer")
                 }
-                .help("go build ./... (⌘B)")
+                .help("cargo build (⌘B)")
                 Button { workspace.runTests(.all) } label: {
                     Label("Test", systemImage: "checkmark.diamond")
                 }
-                .help("go test ./... (⌘U)")
+                .help("cargo test (⌘U)")
                 RunConfigurationPicker()
                 Button { workspace.runSelectedConfiguration() } label: {
                     Label("Run", systemImage: "play.fill")
@@ -544,8 +544,8 @@ private struct OutputLine: View {
     let text: String
 
     var body: some View {
-        if let reference = GoTestFinder.fileReferences(in: text).first {
-            Button { workspace.revealOutputReference(file: reference.file, line: reference.line) } label: {
+        if let reference = OutputReferences.find(in: text).first {
+            Button { workspace.revealOutputReference(file: reference.file, line: reference.line, column: reference.column) } label: {
                 Text(text).underline().foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)

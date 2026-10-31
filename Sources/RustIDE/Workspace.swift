@@ -267,7 +267,10 @@ final class Workspace {
     var selectedRunConfigurationID: UUID? {
         didSet { saveRunConfigurations() }
     }
-    private(set) var mainPackages: [String] = []
+    /// `cargo metadata` for the folder (nil when it isn't a Cargo project or cargo failed).
+    private(set) var cargoMetadata: CargoMetadata?
+    /// Binaries and examples, for run configurations.
+    var runTargets: [CargoTarget] { cargoMetadata?.runnableTargets ?? [] }
     var isEditingRunConfigurations = false
 
     var selectedRunConfiguration: RunConfiguration? {
@@ -354,7 +357,7 @@ final class Workspace {
         }
         for document in documents { sendDidClose(document) }
         await stopLanguageServer()
-        // Use the real path (e.g. /private/tmp, not /tmp) so it matches what gopls reports.
+        // Use the real path (e.g. /private/tmp, not /tmp) so it matches what rust-analyzer reports.
         let url = url.canonicalFileURL
         rootURL = url
         fileTree = FileNode.loadTree(at: url)
@@ -369,7 +372,8 @@ final class Workspace {
         backStack = []
         searchResults = []
         SessionStore.noteOpened(url)
-        loadRunConfigurations()
+        cargoMetadata = nil
+        await loadRunConfigurations()
         if openDefaultFile {
             restoreSession(in: url)
         }
@@ -381,26 +385,28 @@ final class Workspace {
 
     @ObservationIgnored private var loadingRunConfigurations = false
 
-    /// Saved configurations for this folder, or one per main package found.
-    func loadRunConfigurations() {
+    /// Saved configurations for this folder, or one per binary / example Cargo reports.
+    func loadRunConfigurations() async {
         guard let rootURL else { return }
-        mainPackages = GoPackages.mainPackages(under: rootURL)
+        await refreshCargoMetadata()
+        guard self.rootURL == rootURL else { return }  // folder changed meanwhile
         loadingRunConfigurations = true
         defer { loadingRunConfigurations = false }
         if let saved = SessionStore.runConfigurations(for: rootURL), !saved.configs.isEmpty {
             runConfigurations = saved.configs
             selectedRunConfigurationID = saved.selected ?? saved.configs.first?.id
         } else {
-            runConfigurations = mainPackages.map {
-                RunConfiguration(name: $0 == "." ? rootURL.lastPathComponent : ($0 as NSString).lastPathComponent, package: $0)
-            }
+            runConfigurations = runTargets.map(RunConfiguration.init(target:))
             selectedRunConfigurationID = runConfigurations.first?.id
         }
     }
 
-    func refreshMainPackages() {
+    /// Re-reads `cargo metadata` (off the main thread).
+    func refreshCargoMetadata() async {
         guard let rootURL else { return }
-        mainPackages = GoPackages.mainPackages(under: rootURL)
+        let root = rootURL
+        let metadata = await Task.detached(priority: .userInitiated) { CargoMetadata.load(root: root) }.value
+        if self.rootURL == root { cargoMetadata = metadata }
     }
 
     private func saveRunConfigurations() {
@@ -408,10 +414,16 @@ final class Workspace {
         SessionStore.saveRunConfigurations(runConfigurations, selected: selectedRunConfigurationID, for: rootURL)
     }
 
-    /// ⌘R: `go run <package> <args>` with the configuration's environment.
+    /// ⌘R: `cargo run <target flags> -- <args>` with the configuration's environment.
     func runSelectedConfiguration() {
-        guard let config = selectedRunConfiguration else { return runGo(["run", "."]) }
-        runGo(["run", config.packagePattern] + config.argumentList, environment: config.environmentVariables)
+        guard let config = selectedRunConfiguration else { return runCargo(["run"]) }
+        runCargo(config.cargoRunArguments, environment: config.environmentVariables)
+    }
+
+    /// ⌘B: builds what Run would run (else the whole workspace).
+    func buildProject() {
+        guard let config = selectedRunConfiguration else { return runCargo(["build", "--workspace"]) }
+        runCargo(["build"] + config.cargoTargetArguments)
     }
 
     // MARK: - Session
@@ -457,12 +469,15 @@ final class Workspace {
         }
     }
 
-    /// Reacts to files changed on disk (by us, an external editor, git, go generate…).
+    /// Reacts to files changed on disk (by us, an external editor, git, build scripts…).
     func handleFileSystemChanges(_ paths: [String]) {
         // Commits, checkouts, staging… only touch .git: refresh Git state for those too.
         if paths.contains(where: { $0.contains("/.git/") || $0.hasSuffix("/.git") }) { refreshGit() }
         let relevant = paths.filter { !isIgnored(path: $0) }
         guard !relevant.isEmpty else { return }
+        if relevant.contains(where: { $0.hasSuffix("/Cargo.toml") }) || relevant.contains(where: { $0.contains("/src/bin/") || $0.contains("/examples/") }) {
+            Task { await refreshCargoMetadata() }  // targets may have changed
+        }
         reloadTree()
         notifyWatchedFiles(relevant)
         for document in documents { syncWithDisk(document) }
@@ -1752,14 +1767,14 @@ final class Workspace {
         }
     }
 
-    /// Opens `file.go:line` from test output (resolved by file name within the project).
-    func revealOutputReference(file: String, line: Int) {
+    /// Opens `file.rs:line[:column]` from build / test output (resolved within the project).
+    func revealOutputReference(file: String, line: Int, column: Int? = nil) {
         guard let rootURL else { return }
         let suffix = "/" + (file as NSString).lastPathComponent
         let candidates = ProjectSearch.files(under: rootURL).filter { $0.hasSuffix(suffix) }
         let match = candidates.first { $0.hasSuffix("/" + file) } ?? candidates.first
         guard let path = match else { return }
-        navigate(to: URL(fileURLWithPath: path), position: TextPosition(line: max(line - 1, 0), character: 0))
+        navigate(to: URL(fileURLWithPath: path), position: TextPosition(line: max(line - 1, 0), character: max((column ?? 1) - 1, 0)))
     }
 
     // MARK: - Debugging
@@ -1921,12 +1936,12 @@ final class Workspace {
 
     var isDebugging: Bool { debugSession?.isActive ?? false }
 
-    // MARK: - go run / build / test
+    // MARK: - cargo run / build / check
 
-    func runGo(_ arguments: [String], environment extra: [String: String] = [:]) {
+    func runCargo(_ arguments: [String], environment extra: [String: String] = [:]) {
         guard let rootURL, !isRunning else { return }
-        guard let go = ToolLocator.find("go") else {
-            output = "go not found. Install Go from https://go.dev/dl/\n"
+        guard let cargo = ToolLocator.find("cargo") else {
+            output = "cargo not found. Install Rust from https://rustup.rs\n"
             bottomTab = .output
             return
         }
@@ -1934,15 +1949,16 @@ final class Workspace {
         let envNote = extra.isEmpty ? "" : extra.keys.sorted().map { "\($0)=… " }.joined()
         // Echo the command shell-style (quote words with spaces) so it reads as it ran.
         let shown = arguments.map { $0.contains(" ") || $0.isEmpty ? "\"\($0)\"" : $0 }.joined(separator: " ")
-        output = "$ \(envNote)go \(shown)\n"
+        output = "$ \(envNote)cargo \(shown)\n"
         bottomTab = .output
         isRunning = true
 
         let process = Process()
-        process.executableURL = go
+        process.executableURL = cargo
         process.arguments = arguments
         process.currentDirectoryURL = rootURL
-        process.environment = ToolLocator.environment().merging(extra) { $1 }
+        // No ANSI escapes in the Output panel; it isn't a terminal.
+        process.environment = ToolLocator.environment().merging(["CARGO_TERM_COLOR": "never"]) { $1 }.merging(extra) { $1 }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -1970,7 +1986,7 @@ final class Workspace {
             runProcess = process
         } catch {
             isRunning = false
-            appendOutput("Failed to start go: \(error.localizedDescription)\n")
+            appendOutput("Failed to start cargo: \(error.localizedDescription)\n")
         }
     }
 

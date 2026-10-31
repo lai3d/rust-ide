@@ -1,21 +1,38 @@
 import Foundation
 
-/// How to run/debug a main package: which one, with what arguments and environment.
+/// How to run/debug a Cargo binary or example: which target, profile, features, arguments, environment.
 public struct RunConfiguration: Codable, Sendable, Hashable, Identifiable {
     public var id = UUID()
     public var name: String
-    /// Package directory relative to the project root ("." for the root).
+    /// Cargo package name (`-p`); empty for a single-package project.
     public var package: String
+    /// Binary or example name.
+    public var target: String
+    public var kind: CargoTarget.Kind
+    /// Space- or comma-separated features (`--features`).
+    public var features: String
+    public var release: Bool
     /// Program arguments, shell-style (quotes group words).
     public var arguments: String
     /// Extra environment, one `KEY=value` per line.
     public var environment: String
 
-    public init(name: String, package: String, arguments: String = "", environment: String = "") {
+    public init(name: String, package: String = "", target: String, kind: CargoTarget.Kind = .bin,
+                features: String = "", release: Bool = false, arguments: String = "", environment: String = "") {
         self.name = name
         self.package = package
+        self.target = target
+        self.kind = kind
+        self.features = features
+        self.release = release
         self.arguments = arguments
         self.environment = environment
+    }
+
+    public init(target: CargoTarget) {
+        self.init(name: target.kind == .example ? "\(target.name) (example)" : target.name,
+                  package: target.package, target: target.name, kind: target.kind,
+                  features: target.requiredFeatures.joined(separator: " "))
     }
 
     public var argumentList: [String] { ShellWords.split(arguments) }
@@ -30,8 +47,28 @@ public struct RunConfiguration: Codable, Sendable, Hashable, Identifiable {
         return result
     }
 
-    /// `go run` / `dlv` package pattern: "./cmd/server" or ".".
-    public var packagePattern: String { package == "." || package.isEmpty ? "." : "./" + package }
+    /// Target selection flags shared by `cargo run` and `cargo build`.
+    public var cargoTargetArguments: [String] {
+        var args: [String] = []
+        if !package.isEmpty { args += ["-p", package] }
+        if !target.isEmpty { args += [kind == .example ? "--example" : "--bin", target] }
+        let featureList = features.split(whereSeparator: { $0 == " " || $0 == "," }).joined(separator: ",")
+        if !featureList.isEmpty { args += ["--features", featureList] }
+        if release { args.append("--release") }
+        return args
+    }
+
+    /// `cargo run …  -- <args>`.
+    public var cargoRunArguments: [String] {
+        let program = argumentList
+        return ["run"] + cargoTargetArguments + (program.isEmpty ? [] : ["--"] + program)
+    }
+
+    /// Where `cargo build` puts the executable.
+    public func executablePath(targetDirectory: String) -> String {
+        let profile = release ? "release" : "debug"
+        return kind == .example ? "\(targetDirectory)/\(profile)/examples/\(target)" : "\(targetDirectory)/\(profile)/\(target)"
+    }
 }
 
 public enum ShellWords {
@@ -63,22 +100,5 @@ public enum ShellWords {
         }
         if inWord { words.append(current) }
         return words
-    }
-}
-
-public enum GoPackages {
-    /// Directories (relative to `root`, "." for the root) whose non-test files declare `package main`.
-    public static func mainPackages(under root: URL) -> [String] {
-        let rootPath = root.canonicalFileURL.path
-        var found = Set<String>()
-        for path in ProjectSearch.files(under: root) where path.hasSuffix(".go") && !path.hasSuffix("_test.go") {
-            guard let text = try? String(contentsOfFile: path, encoding: .utf8),
-                  text.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces) == "package main" })
-            else { continue }
-            let dir = (path as NSString).deletingLastPathComponent
-            let relative = dir == rootPath ? "." : String(dir.dropFirst(rootPath.count + 1))
-            found.insert(relative)
-        }
-        return found.sorted { $0 == "." || ($1 != "." && $0.localizedStandardCompare($1) == .orderedAscending) }
     }
 }

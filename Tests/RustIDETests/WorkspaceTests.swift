@@ -464,3 +464,36 @@ struct RustAnalyzerFixture {
 
     func remove() { try? FileManager.default.removeItem(at: dir) }
 }
+
+@MainActor
+@Suite struct WorkspaceCargoTests {
+    @Test(.enabled(if: RustIDECore.ToolLocator.find("cargo") != nil), .timeLimit(.minutes(2)))
+    func derivesRunConfigurationsAndRunsThem() async throws {
+        let fixture = try RustAnalyzerFixture([
+            "src/main.rs": "fn main() {\n    println!(\"hello from main {:?}\", std::env::args().skip(1).collect::<Vec<_>>());\n}\n",
+            "src/bin/extra.rs": "fn main() {\n    println!(\"extra {}\", std::env::var(\"GREETING\").unwrap_or_default());\n}\n",
+        ])
+        defer { fixture.remove() }
+        let workspace = Workspace()
+        await workspace.openFolder(fixture.dir)
+        #expect(Set(workspace.runConfigurations.map(\.name)) == ["fixture", "extra"])
+        #expect(workspace.activeDocument?.name == "main.rs")  // default file: src/main.rs
+
+        func run(_ name: String) async throws -> String {
+            workspace.selectedRunConfigurationID = workspace.runConfigurations.first { $0.name == name }?.id
+            workspace.runSelectedConfiguration()
+            #expect(workspace.isRunning)
+            for _ in 0..<1200 where workspace.isRunning { try await Task.sleep(for: .milliseconds(100)) }
+            return workspace.output
+        }
+        workspace.runConfigurations[workspace.runConfigurations.firstIndex { $0.name == "fixture" }!].arguments = #"a "b c""#
+        let mainOutput = try await run("fixture")
+        #expect(mainOutput.hasPrefix("$ cargo run -p fixture --bin fixture -- a \"b c\""), "\(mainOutput)")
+        #expect(mainOutput.contains(#"hello from main ["a", "b c"]"#), "\(mainOutput)")
+
+        workspace.runConfigurations[workspace.runConfigurations.firstIndex { $0.name == "extra" }!].environment = "GREETING=hi"
+        let extraOutput = try await run("extra")
+        #expect(extraOutput.contains("extra hi"), "\(extraOutput)")
+        await workspace.shutdown()
+    }
+}
