@@ -287,11 +287,12 @@ final class Workspace {
     // Find references
     private(set) var referenceResults: [SearchFileResult] = []
     private(set) var referenceTitle = ""
-    /// Settings ▸ Editor (and Go ▸ Format on Save).
+    /// Settings ▸ Editor (and Cargo ▸ Format on Save).
     var formatOnSave: Bool { UserDefaults.standard.object(forKey: "formatOnSave") as? Bool ?? true }
 
     @ObservationIgnored private var lsp: LSPClient?
     @ObservationIgnored private var lspReady = false
+    @ObservationIgnored private var settingsObserver: NSObjectProtocol?
     @ObservationIgnored private var semanticLegend: SemanticTokenLegend?
     @ObservationIgnored private var runProcess: Process?
     @ObservationIgnored private var watcher: DirectoryWatcher?
@@ -1183,13 +1184,13 @@ final class Workspace {
         }
     }
 
-    /// Requests gopls sends to us.
+    /// Requests rust-analyzer sends to us.
     private func handleServerRequest(method: String, params: JSONValue) -> JSONValue? {
         switch method {
         case "workspace/configuration":
-            // Same settings as initializationOptions, so gopls keeps hints enabled.
+            // Same settings as initializationOptions, with the user's current choices.
             let items = params["items"]?.arrayValue ?? []
-            return .array(items.map { $0["section"]?.stringValue == "rust-analyzer" ? RustAnalyzerSettings.default : .null })
+            return .array(items.map { $0["section"]?.stringValue == "rust-analyzer" ? RustAnalyzerSettings.current : .null })
         case "workspace/applyEdit":
             apply(WorkspaceEdit.parse(params["edit"] ?? .null))
             return ["applied": true]
@@ -1486,6 +1487,7 @@ final class Workspace {
             semanticLegend = SemanticTokenLegend(initializeResult: initialized)
             try client.notify("initialized", params: [:])
             lspReady = true
+            observeSettings()
             lspStatus = "rust-analyzer: indexing…"
             languageServerEpoch += 1
             documents.forEach(sendDidOpen)
@@ -1493,6 +1495,22 @@ final class Workspace {
             if lsp === client { lsp = nil }
             lspStatus = "rust-analyzer failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Settings ▸ Editor / Cargo ▸ Clippy on Save: rust-analyzer re-reads its configuration
+    /// (workspace/configuration) after didChangeConfiguration.
+    private func observeSettings() {
+        guard settingsObserver == nil else { return }
+        settingsObserver = NotificationCenter.default.addObserver(
+            forName: .rustAnalyzerSettingsChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pushSettings() }
+        }
+    }
+
+    func pushSettings() {
+        guard lspReady else { return }
+        try? lsp?.notify("workspace/didChangeConfiguration", params: ["settings": RustAnalyzerSettings.current])
     }
 
     private func stopLanguageServer() async {
@@ -1614,7 +1632,7 @@ final class Workspace {
             "processId": .int(Int(ProcessInfo.processInfo.processIdentifier)),
             "clientInfo": ["name": "RustIDE", "version": "0.1.0"],
             "rootUri": .string(root.absoluteString),
-            "initializationOptions": RustAnalyzerSettings.default,
+            "initializationOptions": RustAnalyzerSettings.current,
             "workspaceFolders": [["uri": .string(root.absoluteString), "name": .string(root.lastPathComponent)]],
             "capabilities": [
                 "textDocument": textDocument,

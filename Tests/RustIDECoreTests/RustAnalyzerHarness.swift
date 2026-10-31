@@ -23,6 +23,13 @@ final class RustAnalyzerHarness: @unchecked Sendable {
     let client = LSPClient()
     private(set) var semanticLegend: SemanticTokenLegend?
     private let notifications = NotificationLog()
+    private let configurationLock = NSLock()
+    private var _configuration: JSONValue
+    /// Answer to workspace/configuration for "rust-analyzer"; change it, then send didChangeConfiguration.
+    var configuration: JSONValue {
+        get { configurationLock.withLock { _configuration } }
+        set { configurationLock.withLock { _configuration = newValue } }
+    }
 
     /// `files` maps crate-relative paths (e.g. "src/main.rs") to contents; Cargo.toml is added if missing.
     init(files: [String: String], textDocument: JSONValue = [:], settings: JSONValue? = nil) async throws {
@@ -40,16 +47,23 @@ final class RustAnalyzerHarness: @unchecked Sendable {
             try contents.write(to: url, atomically: true, encoding: .utf8)
         }
 
+        _configuration = settings ?? Self.testSettings
         let log = notifications
         client.onNotification = { method, params in log.record(method, params) }
+        client.onRequest = { [weak self] method, params in
+            guard method == "workspace/configuration", let self else { return nil }
+            let settings = self.configuration
+            return .array((params["items"]?.arrayValue ?? []).map { _ in settings })
+        }
         try client.start(executable: try #require(ToolLocator.find("rust-analyzer")),
                          environment: ToolLocator.environment(), currentDirectory: dir)
         let initialized = try await client.request("initialize", params: [
             "processId": .int(Int(getpid())),
             "rootUri": .string(dir.absoluteString),
-            "initializationOptions": settings ?? Self.testSettings,
+            "initializationOptions": _configuration,
             "capabilities": [
                 "textDocument": textDocument,
+                "workspace": ["configuration": true],
                 "window": ["workDoneProgress": true],
                 "experimental": ["serverStatusNotification": true],
             ],

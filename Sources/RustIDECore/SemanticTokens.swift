@@ -3,20 +3,39 @@ import Foundation
 /// rust-analyzer settings RustIDE relies on (sent as initializationOptions and
 /// answered for workspace/configuration section "rust-analyzer").
 public enum RustAnalyzerSettings {
-    public static let `default`: JSONValue = [
-        "inlayHints": [
-            "typeHints": ["enable": true],
-            "parameterHints": ["enable": true],
-            "chainingHints": ["enable": true],
-            "closingBraceHints": ["enable": false],
-            "lifetimeElisionHints": ["enable": "never"],
-        ],
-        "completion": ["callable": ["snippets": "fill_arguments"]],  // calls get parameter placeholders
-        "check": ["command": "check"],
-        "cargo": ["buildScripts": ["enable": true]],
-        "procMacro": ["enable": true],
-        "semanticHighlighting": ["strings": ["enable": false]],  // the lexer colors strings
-    ]
+    /// UserDefaults key: the command rust-analyzer runs on save ("check" or "clippy").
+    public static let checkCommandKey = "checkCommand"
+    public static let checkCommands = ["check", "clippy"]
+
+    public static let `default` = make()
+
+    /// The settings with the user's choices from UserDefaults.
+    public static var current: JSONValue {
+        make(checkCommand: UserDefaults.standard.string(forKey: checkCommandKey) ?? "check")
+    }
+
+    public static func make(checkCommand: String = "check") -> JSONValue {
+        [
+            "inlayHints": [
+                "typeHints": ["enable": true],
+                "parameterHints": ["enable": true],
+                "chainingHints": ["enable": true],
+                "closingBraceHints": ["enable": false],
+                "lifetimeElisionHints": ["enable": "never"],
+            ],
+            "completion": ["callable": ["snippets": "fill_arguments"]],  // calls get parameter placeholders
+            // `cargo check` or `cargo clippy` on save; --all-targets so tests and examples are checked too.
+            "check": ["command": .string(checkCommands.contains(checkCommand) ? checkCommand : "check"), "allTargets": true],
+            "cargo": ["buildScripts": ["enable": true]],
+            "procMacro": ["enable": true],
+            "semanticHighlighting": ["strings": ["enable": false]],  // the lexer colors strings
+        ]
+    }
+}
+
+public extension Notification.Name {
+    /// Posted when a setting sent to rust-analyzer changes; workspaces push the new configuration.
+    static let rustAnalyzerSettingsChanged = Notification.Name("RustAnalyzerSettingsChanged")
 }
 
 /// One decoded semantic token (`textDocument/semanticTokens/full`).

@@ -15,7 +15,7 @@ jobs:
 
       - name: Rust toolchain + rust-analyzer
         run: |
-          rustup toolchain install stable --profile minimal --component rust-analyzer,rustfmt,rust-src
+          rustup toolchain install stable --profile minimal --component rust-analyzer,rustfmt,rust-src,clippy
           rustup default stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 

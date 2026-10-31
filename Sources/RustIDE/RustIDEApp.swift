@@ -1,4 +1,5 @@
 import AppKit
+import RustIDECore
 import SwiftUI
 
 @MainActor
@@ -84,6 +85,7 @@ struct RustIDECommands: Commands {
     @FocusedValue(\.workspace) private var focused: Workspace?
     @Environment(\.openWindow) private var openWindow
     @AppStorage("formatOnSave") private var formatOnSave = true
+    @AppStorage(RustAnalyzerSettings.checkCommandKey) private var checkCommand = "check"
 
     /// Without a focused window, commands target an empty workspace (and are disabled or no-ops).
     private var workspace: Workspace { focused ?? Workspace.placeholder }
@@ -301,6 +303,12 @@ struct RustIDECommands: Commands {
                     .keyboardShortcut("f", modifiers: [.option, .shift])
                     .disabled(!workspace.isRustFile)
                 Toggle("Format on Save", isOn: $formatOnSave)
+                Toggle("Clippy on Save", isOn: Binding(
+                    get: { checkCommand == "clippy" },
+                    set: {
+                        checkCommand = $0 ? "clippy" : "check"
+                        NotificationCenter.default.post(name: .rustAnalyzerSettingsChanged, object: nil)
+                    }))
                 Divider()
                 Button("Restart rust-analyzer") { Task { await workspace.restartLanguageServer() } }
             }

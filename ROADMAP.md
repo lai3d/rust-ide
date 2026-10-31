@@ -31,7 +31,7 @@ language-specific layer.
 
 | # | Item | Notes | Est. |
 |---|---|---|---|
-| 2.1 | ⬜ Clippy & fmt | Clippy as check command, rustfmt on save, `rustfmt.toml` respected | 0.3h |
+| 2.1 | ✅ Clippy & fmt | Settings ▸ Check on save (cargo check / clippy) and Cargo ▸ Clippy on Save, pushed live via didChangeConfiguration; rustfmt on save respects `rustfmt.toml` | 0.3h |
 | 2.2 | ⬜ Expand macro | rust-analyzer `expandMacro` at the caret, shown in a read-only tab | 0.3h |
 | 2.3 | ⬜ Cargo.toml tools | Dependencies view from `cargo metadata`, `cargo update`, feature toggles | 0.6h |
 | 2.4 | ⬜ Runnables | rust-analyzer `experimental/runnables`: ▶ on `main`, tests, benches, doctests | 0.5h |
