@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # version number from git describe
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false  # no go.sum here; nothing to cache
+
+      - name: Install gopls and Delve
+        run: |
+          go install golang.org/x/tools/gopls@latest
+          go install github.com/go-delve/delve/cmd/dlv@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Allow debugging (Delve)
+        run: sudo DevToolsSecurity -enable || true
+
+      - name: Toolchain
+        run: |
+          swift --version
+          go version
+          gopls version
+          dlv version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Bundle RustIDE.app
+        run: ./scripts/bundle.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: RustIDE-app
+          path: build/RustIDE.zip
