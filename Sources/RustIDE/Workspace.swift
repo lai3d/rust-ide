@@ -120,8 +120,12 @@ final class Document: Identifiable {
     var usesLanguageServer: Bool { isRust && !Self.isExpansion(url) }
 
     /// Folder for macro expansion tabs (read-only, highlighted, not sent to rust-analyzer).
-    nonisolated static let expansionDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("RustIDE-macro-expansions", isDirectory: true).canonicalFileURL
+    /// Created up front: resolving symlinks (/var → /private/var) only works for paths that exist.
+    nonisolated static let expansionDirectory: URL = {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("RustIDE-macro-expansions", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url.canonicalFileURL
+    }()
 
     nonisolated static func isExpansion(_ url: URL) -> Bool {
         url.canonicalFileURL.path.hasPrefix(expansionDirectory.path + "/")
