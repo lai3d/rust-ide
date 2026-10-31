@@ -99,7 +99,7 @@ enum DebuggerAvailability {
             }
 
             """)
-        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        defer { try? FileManager.default.removeItem(at: dir) }
         let client = DAPClient()
         let (events, continuation) = AsyncStream<(String, JSONValue)>.makeStream()
         client.onEvent = { continuation.yield(($0, $1)) }
@@ -161,7 +161,7 @@ enum DebuggerAvailability {
             }
 
             """)
-        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        defer { try? FileManager.default.removeItem(at: dir) }
         let client = DAPClient()
         let (events, continuation) = AsyncStream<(String, JSONValue)>.makeStream()
         client.onEvent = { continuation.yield(($0, $1)) }
