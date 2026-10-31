@@ -24,7 +24,7 @@ language-specific layer.
 | 1.4 | ✅ Cargo tests | libtest output parser (suites, ok / FAILED / ignored, captured failure output); `#[test]` finder with module paths; gutter ▶ / ✓ / ✗; run at caret (`-- path --exact` in the right `--lib` / `--bin` / `--test` target), package, all | 0.7h |
 | 1.5 | ⬜ Debugger (lldb-dap) | Replace Delve: launch the built binary / test binary under `xcrun lldb-dap`, Rust variable formatting | 1–1.5h |
 | 1.6 | ✅ Run configurations | Bins / examples from `cargo metadata` (refreshed when Cargo.toml changes), args, env, features, release profile | 0.5h |
-| 1.7 | ⬜ Snippets & settings | Rust snippets (`fn`, `test`, `impl`, `match`, …); cargo / rust-analyzer / lldb-dap path overrides | 0.4h |
+| 1.7 | ✅ Snippets & settings | 18 Rust snippets that complement rust-analyzer's own; space indentation (Tab, Return, ⌘] / ⌘[, electric `}`) at the tab-width setting; cargo / rust-analyzer / lldb-dap path overrides | 0.4h |
 | 1.8 | ⬜ CI & release | Rust toolchain in GitHub Actions, tagged `RustIDE-vX.Y.Z.zip`, app icon, IDE Toolbox catalog entry | 0.5h |
 
 ## Phase 2 — Rust-specific features

@@ -874,7 +874,7 @@ final class Workspace {
         let start = GoIdentifier.prefixStart(in: ns, before: offset)
         let prefix = ns.substring(with: NSRange(location: start, length: offset - start))
         let afterDot = start > 0 && ns.character(at: start - 1) == 0x2E
-        let snippets = document.isRust && !afterDot ? GoSnippets.completions(matching: prefix) : []
+        let snippets = document.isRust && !afterDot ? RustSnippets.completions(matching: prefix) : []
         guard case let (lsp, params)? = positionRequest(document, at: offset),
               let result = try? await lsp.request("textDocument/completion", params: params)
         else { return snippets }

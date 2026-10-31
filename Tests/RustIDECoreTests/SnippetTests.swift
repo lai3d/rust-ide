@@ -29,9 +29,17 @@ import Testing
     }
 
     @Test func builtInSnippetsMatchTriggers() {
-        #expect(GoSnippets.completions(matching: "iferr").map(\.label) == ["iferr"])
-        #expect(GoSnippets.completions(matching: "fo").map(\.label).contains("fori"))
-        #expect(GoSnippets.completions(matching: "x").isEmpty)
-        #expect(GoSnippets.all.allSatisfy { !Snippet.parse($0.body).stops.isEmpty })
+        #expect(RustSnippets.completions(matching: "iflet").map(\.label) == ["iflet"])
+        #expect(RustSnippets.completions(matching: "im").map(\.label).contains("implt"))
+        #expect(RustSnippets.completions(matching: "x").isEmpty)
+        #expect(RustSnippets.all.allSatisfy { !Snippet.parse($0.body).stops.isEmpty })
+        #expect(RustSnippets.all.allSatisfy { !$0.body.contains("\t") })  // rustfmt style: spaces
+    }
+
+    @Test func expandsNestedPlaceholders() {
+        let fn = Snippet.parse(RustSnippets.all.first { $0.trigger == "fn" }!.body)
+        #expect(fn.text == "fn name() -> () {\n    \n}")
+        let ns = fn.text as NSString
+        #expect(fn.stops.map { ns.substring(with: $0) }.prefix(3) == ["name", "", "-> () "])
     }
 }

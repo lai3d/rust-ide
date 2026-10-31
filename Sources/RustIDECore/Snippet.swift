@@ -93,24 +93,28 @@ public struct Snippet: Sendable, Hashable {
     }
 }
 
-/// Built-in Go snippets, offered in completion by trigger word.
-public enum GoSnippets {
+/// Built-in Rust snippets, offered in completion by trigger word (rust-analyzer adds its own:
+/// `tfn`, `tmod`, postfix `.if` / `.match` / `.ok` …).
+public enum RustSnippets {
     public static let all: [(trigger: String, detail: String, body: String)] = [
-        ("iferr", "if err != nil { return … }", "if err != nil {\n\treturn ${1:err}\n}$0"),
-        ("errorf", "fmt.Errorf(\"…: %w\", err)", "fmt.Errorf(\"${1:context}: %w\", ${2:err})$0"),
-        ("fori", "for i := 0; i < n; i++ { … }", "for i := 0; i < ${1:n}; i++ {\n\t$0\n}"),
-        ("forr", "for k, v := range … { … }", "for ${1:_}, ${2:v} := range ${3:items} {\n\t$0\n}"),
-        ("func", "func name(…) … { … }", "func ${1:name}(${2}) ${3}{\n\t$0\n}"),
-        ("meth", "func (r T) Name(…) … { … }", "func (${1:r} ${2:*Receiver}) ${3:Name}(${4}) ${5}{\n\t$0\n}"),
-        ("main", "func main() { … }", "func main() {\n\t$0\n}"),
-        ("test", "func TestName(t *testing.T) { … }", "func Test${1:Name}(t *testing.T) {\n\t$0\n}"),
-        ("tt", "table-driven test", "tests := []struct {\n\tname string\n\t${1:input} ${2:string}\n\twant ${3:string}\n}{\n\t{name: \"${4:case}\"},\n}\nfor _, tt := range tests {\n\tt.Run(tt.name, func(t *testing.T) {\n\t\t$0\n\t})\n}"),
-        ("sw", "switch … { case …: }", "switch ${1:x} {\ncase ${2:value}:\n\t$0\n}"),
-        ("sel", "select { case …: }", "select {\ncase ${1:v} := <-${2:ch}:\n\t$0\n}"),
-        ("gof", "go func() { … }()", "go func() {\n\t$0\n}()"),
-        ("deferf", "defer func() { … }()", "defer func() {\n\t$0\n}()"),
-        ("st", "type Name struct { … }", "type ${1:Name} struct {\n\t$0\n}"),
-        ("if", "interface { … }", "type ${1:Name} interface {\n\t$0\n}"),
+        ("fn", "fn name(…) -> T { … }", "fn ${1:name}(${2}) ${3:-> ${4:()} }{\n    $0\n}"),
+        ("pfn", "pub fn name(…) -> T { … }", "pub fn ${1:name}(${2}) ${3:-> ${4:()} }{\n    $0\n}"),
+        ("main", "fn main() { … }", "fn main() {\n    $0\n}"),
+        ("st", "struct Name { … }", "#[derive(Debug${1:, Clone})]\nstruct ${2:Name} {\n    $0\n}"),
+        ("en", "enum Name { … }", "#[derive(Debug${1:, Clone, Copy, PartialEq, Eq})]\nenum ${2:Name} {\n    $0\n}"),
+        ("impl", "impl Type { … }", "impl ${1:Type} {\n    $0\n}"),
+        ("implt", "impl Trait for Type { … }", "impl ${1:Trait} for ${2:Type} {\n    $0\n}"),
+        ("tr", "trait Name { … }", "trait ${1:Name} {\n    $0\n}"),
+        ("match", "match … { … }", "match ${1:value} {\n    ${2:pattern} => $0,\n    _ => {}\n}"),
+        ("iflet", "if let Some(x) = … { … }", "if let ${1:Some(${2:x})} = ${3:value} {\n    $0\n}"),
+        ("letelse", "let Some(x) = … else { … };", "let ${1:Some(${2:x})} = ${3:value} else {\n    ${4:return};\n};$0"),
+        ("whilelet", "while let Some(x) = … { … }", "while let ${1:Some(${2:x})} = ${3:iter.next()} {\n    $0\n}"),
+        ("for", "for x in … { … }", "for ${1:item} in ${2:items} {\n    $0\n}"),
+        ("test", "#[test] fn name() { … }", "#[test]\nfn ${1:name}() {\n    $0\n}"),
+        ("modtest", "#[cfg(test)] mod tests { … }", "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn ${1:works}() {\n        $0\n    }\n}"),
+        ("derive", "#[derive(…)]", "#[derive(${1:Debug, Clone})]$0"),
+        ("disp", "impl fmt::Display for Type", "impl std::fmt::Display for ${1:Type} {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"${2:{}}\", ${3:self.0})\n    }\n}$0"),
+        ("from", "impl From<T> for Type", "impl From<${1:Source}> for ${2:Type} {\n    fn from(${3:value}: ${1:Source}) -> Self {\n        $0\n    }\n}"),
     ]
 
     /// Completion items for snippets whose trigger matches `prefix` (fuzzy, needs ≥ 2 chars).

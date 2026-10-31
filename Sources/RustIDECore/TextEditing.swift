@@ -70,8 +70,8 @@ public enum TextEditing {
         return TextChange(range: range, replacement: replacement, selection: newSelection)
     }
 
-    /// Indents (adds a tab) or outdents (removes a tab or up to four spaces) the selected lines.
-    public static func shiftLines(in text: String, selection: NSRange, outdent: Bool) -> TextChange {
+    /// Indents (adds `unit`) or outdents (removes a tab or up to `unit`'s width of spaces) the selected lines.
+    public static func shiftLines(in text: String, selection: NSRange, outdent: Bool, unit: String = "    ") -> TextChange {
         let ns = text as NSString
         let range = lineRange(in: ns, selection: selection)
         let (lines, trailing) = lines(ns.substring(with: range))
@@ -82,10 +82,10 @@ public enum TextEditing {
                 if new.hasPrefix("\t") {
                     new.removeFirst()
                 } else {
-                    new = String(new.dropFirst(min(4, new.prefix { $0 == " " }.count)))
+                    new = String(new.dropFirst(min(max(unit.count, 1), new.prefix { $0 == " " }.count)))
                 }
             } else if !line.isEmpty {
-                new = "\t" + line
+                new = unit + line
             }
             if index == 0 { firstDelta = new.utf16.count - line.utf16.count }
             return new

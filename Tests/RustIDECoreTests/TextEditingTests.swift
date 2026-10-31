@@ -27,7 +27,8 @@ import Testing
     }
 
     @Test func indentsAndOutdents() {
-        #expect(run("a\nb\n", NSRange(location: 0, length: 3), { TextEditing.shiftLines(in: $0, selection: $1, outdent: false) }) == "[\ta\n\tb]\n")
+        #expect(run("a\nb\n", NSRange(location: 0, length: 3), { TextEditing.shiftLines(in: $0, selection: $1, outdent: false) }) == "[    a\n    b]\n")
+        #expect(run("a\n", NSRange(location: 0, length: 0), { TextEditing.shiftLines(in: $0, selection: $1, outdent: false, unit: "\t") }) == "\t|a\n")
         #expect(run("\ta\n    b\n", NSRange(location: 0, length: 8), { TextEditing.shiftLines(in: $0, selection: $1, outdent: true) }) == "[a\nb]\n")
         #expect(run("\tx\n", NSRange(location: 2, length: 0), { TextEditing.shiftLines(in: $0, selection: $1, outdent: true) }) == "x|\n")
     }
