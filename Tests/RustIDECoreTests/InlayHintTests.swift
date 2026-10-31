@@ -13,35 +13,17 @@ import Testing
         #expect(hints[1].kind == .type && hints[1].paddingLeft)
     }
 
-    @Test(.enabled(if: ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
-    func goplsReturnsParameterAndTypeHints() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-inlay-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        let source = "package main\n\nfunc greet(name string, times int) {}\n\nfunc main() {\n\tn := 3\n\tgreet(\"x\", n)\n}\n"
-        let file = dir.appendingPathComponent("main.go")
-        try source.write(to: file, atomically: true, encoding: .utf8)
-
-        let client = LSPClient()
-        try client.start(executable: try #require(ToolLocator.find("gopls")),
-                         environment: ToolLocator.environment(), currentDirectory: dir)
-        _ = try await client.request("initialize", params: [
-            "processId": .int(Int(getpid())), "rootUri": .string(dir.absoluteString),
-            "capabilities": ["textDocument": ["inlayHint": [:]]],
-            "initializationOptions": InlayHint.goplsSettings,
-        ])
-        try client.notify("initialized", params: [:])
-        try client.notify("textDocument/didOpen", params: [
-            "textDocument": ["uri": .string(file.absoluteString), "languageId": "go", "version": 1, "text": .string(source)],
-        ])
-        let hints = InlayHint.parseAll(try await client.request("textDocument/inlayHint", params: [
-            "textDocument": ["uri": .string(file.absoluteString)],
-            "range": ["start": ["line": 0, "character": 0], "end": ["line": 8, "character": 0]],
+    @Test(.enabled(if: RustAnalyzerHarness.available), .timeLimit(.minutes(2)))
+    func rustAnalyzerReturnsParameterAndTypeHints() async throws {
+        let source = "fn greet(name: &str, times: u32) {}\n\nfn main() {\n    let n = 3u32;\n    let s = String::new();\n    greet(&s, n);\n}\n"
+        let ra = try await RustAnalyzerHarness(files: ["src/main.rs": source], textDocument: ["inlayHint": [:]])
+        try await ra.open("src/main.rs")
+        let hints = InlayHint.parseAll(try await ra.request("textDocument/inlayHint", [
+            "textDocument": ["uri": ra.uri("src/main.rs")],
+            "range": ["start": ["line": 0, "character": 0], "end": ["line": 7, "character": 0]],
         ]))
-        #expect(hints.contains { $0.label.contains("name") && $0.position.line == 6 })
-        #expect(hints.contains { $0.label.contains("times") && $0.position.line == 6 })
-        #expect(hints.contains { $0.label.contains("int") && $0.position.line == 5 })
-        await client.shutdown()
+        #expect(hints.contains { $0.label.contains("name") && $0.position.line == 5 }, "\(hints)")
+        #expect(hints.contains { $0.label.contains("String") && $0.position.line == 4 })
+        await ra.shutdown()
     }
 }

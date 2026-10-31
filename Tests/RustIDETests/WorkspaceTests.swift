@@ -8,9 +8,9 @@ import RustIDECore
     let dir: URL
 
     init() throws {
-        dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-tabs-\(UUID().uuidString)")
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-tabs-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        for name in ["a.go", "b.go", "c.go"] {
+        for name in ["a.rs", "b.rs", "c.rs"] {
             try "package main\n".write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
         }
     }
@@ -19,80 +19,75 @@ import RustIDECore
 
     @Test func openingTheSameFileReusesItsTab() {
         let workspace = Workspace()
-        let first = workspace.openFile(url("a.go"))
-        workspace.openFile(url("b.go"))
-        let again = workspace.openFile(url("a.go"))
+        let first = workspace.openFile(url("a.rs"))
+        workspace.openFile(url("b.rs"))
+        let again = workspace.openFile(url("a.rs"))
         #expect(first === again)
-        #expect(workspace.documents.map(\.name) == ["a.go", "b.go"])
+        #expect(workspace.documents.map(\.name) == ["a.rs", "b.rs"])
         #expect(workspace.activeDocument === first)
     }
 
     @Test func newTabsOpenNextToTheActiveOne() {
         let workspace = Workspace()
-        let a = workspace.openFile(url("a.go"))!
-        workspace.openFile(url("b.go"))
+        let a = workspace.openFile(url("a.rs"))!
+        workspace.openFile(url("b.rs"))
         workspace.activate(a)
-        workspace.openFile(url("c.go"))
-        #expect(workspace.documents.map(\.name) == ["a.go", "c.go", "b.go"])
+        workspace.openFile(url("c.rs"))
+        #expect(workspace.documents.map(\.name) == ["a.rs", "c.rs", "b.rs"])
     }
 
     @Test func closingTheActiveTabSelectsItsNeighbour() {
         let workspace = Workspace()
-        workspace.openFile(url("a.go"))
-        let b = workspace.openFile(url("b.go"))!
-        workspace.openFile(url("c.go"))
+        workspace.openFile(url("a.rs"))
+        let b = workspace.openFile(url("b.rs"))!
+        workspace.openFile(url("c.rs"))
         workspace.activate(b)
         workspace.closeDocument(b)
-        #expect(workspace.documents.map(\.name) == ["a.go", "c.go"])
-        #expect(workspace.activeDocument?.name == "c.go")
+        #expect(workspace.documents.map(\.name) == ["a.rs", "c.rs"])
+        #expect(workspace.activeDocument?.name == "c.rs")
         workspace.closeAllDocuments()
         #expect(workspace.documents.isEmpty && workspace.activeDocument == nil)
     }
 
     @Test func cyclesTabs() {
         let workspace = Workspace()
-        workspace.openFile(url("a.go"))
-        workspace.openFile(url("b.go"))
+        workspace.openFile(url("a.rs"))
+        workspace.openFile(url("b.rs"))
         workspace.selectAdjacentTab(1)
-        #expect(workspace.activeDocument?.name == "a.go")
+        #expect(workspace.activeDocument?.name == "a.rs")
         workspace.selectAdjacentTab(-1)
-        #expect(workspace.activeDocument?.name == "b.go")
+        #expect(workspace.activeDocument?.name == "b.rs")
     }
 
     @Test func editsMarkDirtyAndSaveWritesToDisk() throws {
         let workspace = Workspace()
-        let a = workspace.openFile(url("a.go"))!
+        let a = workspace.openFile(url("a.rs"))!
         workspace.updateText(of: a, to: "package main\n\nfunc x() {}\n")
         #expect(a.isDirty)
         workspace.save(a)
         #expect(!a.isDirty)
-        #expect(try String(contentsOf: url("a.go"), encoding: .utf8).contains("func x()"))
+        #expect(try String(contentsOf: url("a.rs"), encoding: .utf8).contains("func x()"))
     }
 }
 
 @MainActor
 @Suite struct WorkspaceFormattingTests {
-    @Test(.enabled(if: RustIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
-    func formatsAndOrganizesImportsOnSave() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-wsfmt-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        let file = dir.appendingPathComponent("main.go")
-        try "package main\n\nfunc main(){\nfmt.Println( \"hi\" )\n}\n".write(to: file, atomically: true, encoding: .utf8)
-
-        let workspace = Workspace()
-        await workspace.openFolder(dir)
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(2)))
+    func formatsOnSave() async throws {
+        let fixture = try RustAnalyzerFixture(["src/main.rs": "fn main(){\nprintln!( \"hi\" );\n}\n"])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
         let document = try #require(workspace.activeDocument)
-        #expect(workspace.lspStatus == "gopls: ready")
+        #expect(document.name == "main.rs")
 
         await workspace.format(document)
         #expect(document.isDirty)  // formatted in memory, not yet saved
-        #expect(document.text.contains("func main() {"))
+        #expect(document.text.contains("fn main() {"))
         await workspace.saveFormatted(document)
         #expect(!document.isDirty)
-        let saved = try String(contentsOf: file, encoding: .utf8)
-        #expect(saved == "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n")
+        let saved = try String(contentsOf: fixture.url("src/main.rs"), encoding: .utf8)
+        #expect(saved == "fn main() {\n    println!(\"hi\");\n}\n")
+        await workspace.shutdown()
     }
 }
 
@@ -101,12 +96,12 @@ import RustIDECore
     let dir: URL
 
     init() throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-fs-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-fs-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base.appendingPathComponent("pkg"), withIntermediateDirectories: true)
         dir = base.canonicalFileURL  // real path, as FSEvents reports it
         try "module example.com/fs\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        try "package main\n\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-        try "package widgets\n".write(to: dir.appendingPathComponent("pkg/a.go"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.rs"), atomically: true, encoding: .utf8)
+        try "package widgets\n".write(to: dir.appendingPathComponent("pkg/a.rs"), atomically: true, encoding: .utf8)
     }
 
     private func url(_ path: String) -> URL { dir.appendingPathComponent(path) }
@@ -115,12 +110,12 @@ import RustIDECore
         let workspace = Workspace()
         await workspace.openFolder(dir.canonicalFileURL)
         let main = try #require(workspace.activeDocument)
-        let other = try #require(workspace.openFile(url("pkg/a.go")))
+        let other = try #require(workspace.openFile(url("pkg/a.rs")))
         workspace.updateText(of: other, to: "package widgets // edited\n")
 
-        try "package main\n\nfunc main() { println() }\n".write(to: url("main.go"), atomically: true, encoding: .utf8)
-        try "package widgets // external\n".write(to: url("pkg/a.go"), atomically: true, encoding: .utf8)
-        workspace.handleFileSystemChanges([url("main.go").path, url("pkg/a.go").path])
+        try "package main\n\nfunc main() { println() }\n".write(to: url("main.rs"), atomically: true, encoding: .utf8)
+        try "package widgets // external\n".write(to: url("pkg/a.rs"), atomically: true, encoding: .utf8)
+        workspace.handleFileSystemChanges([url("main.rs").path, url("pkg/a.rs").path])
 
         #expect(main.text.contains("println()") && !main.isDirty)
         #expect(other.text.contains("edited") && other.hasExternalChange)
@@ -132,36 +127,30 @@ import RustIDECore
         let workspace = Workspace()
         await workspace.openFolder(dir.canonicalFileURL)
 
-        let created = try workspace.createFile(named: "b.go", in: url("pkg"))
-        #expect(try String(contentsOf: created, encoding: .utf8) == "package widgets\n")
-        #expect(workspace.activeDocument?.name == "b.go")
-        #expect(throws: FileOperationError.self) { try workspace.createFile(named: "b.go", in: url("pkg")) }
+        let created = try workspace.createFile(named: "b.rs", in: url("pkg"))
+        #expect(try String(contentsOf: created, encoding: .utf8) == "")
+        #expect(workspace.activeDocument?.name == "b.rs")
+        #expect(throws: FileOperationError.self) { try workspace.createFile(named: "b.rs", in: url("pkg")) }
 
         let renamed = try workspace.renameItem(at: url("pkg"), to: "widgets")
-        #expect(workspace.activeDocument?.url.path == renamed.appendingPathComponent("b.go").path)
+        #expect(workspace.activeDocument?.url.path == renamed.appendingPathComponent("b.rs").path)
         #expect(workspace.fileTree.contains { $0.name == "widgets" })
 
         try workspace.trashItem(at: renamed)
-        #expect(!workspace.documents.contains { $0.name == "b.go" })
+        #expect(!workspace.documents.contains { $0.name == "b.rs" })
         #expect(!FileManager.default.fileExists(atPath: renamed.path))
-    }
-
-    @Test func derivesPackageNames() throws {
-        try FileManager.default.createDirectory(at: url("My-Tool"), withIntermediateDirectories: true)
-        #expect(Workspace.packageName(for: url("My-Tool")) == "mytool")
-        #expect(Workspace.packageName(for: dir) == "main")
     }
 }
 
 @MainActor
 @Suite struct WorkspaceSearchTests {
     @Test func searchesProjectIncludingUnsavedBuffers() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-search-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-ws-search-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL
-        try "package main\n\nfunc main() { greet() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-        try "package main\n\nfunc greet() {}\n".write(to: dir.appendingPathComponent("greet.go"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc main() { greet() }\n".write(to: dir.appendingPathComponent("main.rs"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc greet() {}\n".write(to: dir.appendingPathComponent("greet.rs"), atomically: true, encoding: .utf8)
 
         let workspace = Workspace()
         await workspace.openFolder(dir)
@@ -170,14 +159,14 @@ import RustIDECore
         #expect(workspace.searchMatchCount == 2)
 
         // Edit greet.go without saving: the search sees the buffer.
-        let greet = try #require(workspace.openFile(dir.appendingPathComponent("greet.go")))
+        let greet = try #require(workspace.openFile(dir.appendingPathComponent("greet.rs")))
         workspace.updateText(of: greet, to: "package main\n\nfunc greet() {}\nfunc greetAgain() {}\n")
         await workspace.performSearch()
         #expect(workspace.searchMatchCount == 3)
 
-        let file = try #require(workspace.searchResults.first { $0.path.hasSuffix("main.go") })
+        let file = try #require(workspace.searchResults.first { $0.path.hasSuffix("main.rs") })
         workspace.open(file.matches[0], in: file)
-        #expect(workspace.activeDocument?.name == "main.go")
+        #expect(workspace.activeDocument?.name == "main.rs")
         #expect(workspace.activeDocument?.revealTarget?.position == TextPosition(line: 2, character: 14))
         #expect(workspace.activeDocument?.revealTarget?.length == 5)
 
@@ -190,115 +179,82 @@ import RustIDECore
 
 @MainActor
 @Suite struct WorkspaceReferencesTests {
-    @Test(.enabled(if: RustIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(2)))
     func findsReferencesAcrossFilesUsingBuffers() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-refs-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: base) }
-        let dir = base.canonicalFileURL
-        try "module example.com/r\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        try "package main\n\nfunc main() { greet(); greet() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-        try "package main\n\nfunc greet() {}\n".write(to: dir.appendingPathComponent("greet.go"), atomically: true, encoding: .utf8)
-
-        let workspace = Workspace()
-        await workspace.openFolder(dir)
-        let main = try #require(workspace.activeDocument)
-        await workspace.findReferences(in: main, at: ("package main\n\nfunc main() { " as NSString).length + 1)
+        let main = "mod greet;\n\nfn main() { greet::greet(); greet::greet(); }\n"
+        let fixture = try RustAnalyzerFixture(["src/main.rs": main, "src/greet.rs": "pub fn greet() {}\n"])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
+        let document = try #require(workspace.activeDocument)
+        await workspace.findReferences(in: document, at: (main as NSString).range(of: "::greet").location + 3)
         #expect(workspace.bottomTab == .references)
         #expect(workspace.referenceTitle == "3 references to ‘greet’")
-        #expect(workspace.referenceResults.map { ($0.path as NSString).lastPathComponent } == ["greet.go", "main.go"])
+        #expect(workspace.referenceResults.map { ($0.path as NSString).lastPathComponent } == ["greet.rs", "main.rs"])
+        await workspace.shutdown()
     }
 }
 
 @MainActor
 @Suite struct WorkspaceRenameTests {
-    @Test(.enabled(if: RustIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(2)))
     func renamesAcrossOpenAndClosedFiles() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-rename-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: base) }
-        let dir = base.canonicalFileURL
-        try "module example.com/r\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        try "package main\n\nfunc main() { greet() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-        let greetFile = dir.appendingPathComponent("greet.go")
-        try "package main\n\nfunc greet() {}\n".write(to: greetFile, atomically: true, encoding: .utf8)
+        let main = "mod greet;\n\nfn main() { greet::greet() }\n"
+        let fixture = try RustAnalyzerFixture(["src/main.rs": main, "src/greet.rs": "pub fn greet() {}\n"])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
+        let document = try #require(workspace.activeDocument)
+        let offset = (main as NSString).range(of: "::greet").location + 4
 
-        let workspace = Workspace()
-        await workspace.openFolder(dir)
-        let main = try #require(workspace.activeDocument)
-        let offset = ("package main\n\nfunc main() { " as NSString).length + 2
+        #expect(await workspace.prepareRename(in: document, at: offset) == "greet")
+        #expect(await workspace.prepareRename(in: document, at: 13) == nil)  // "fn" keyword
 
-        #expect(await workspace.prepareRename(in: main, at: offset) == "greet")
-        #expect(await workspace.prepareRename(in: main, at: 2) == nil)  // "package" keyword
-
-        let error = await workspace.renameSymbol(in: main, at: offset, to: "salute")
+        let error = await workspace.renameSymbol(in: document, at: offset, to: "salute")
         #expect(error == nil)
-        #expect(main.text == "package main\n\nfunc main() { salute() }\n" && main.isDirty)  // open: buffer
-        #expect(try String(contentsOf: greetFile, encoding: .utf8) == "package main\n\nfunc salute() {}\n")  // closed: disk
+        #expect(document.text == "mod greet;\n\nfn main() { greet::salute() }\n" && document.isDirty)  // open: buffer
+        #expect(try String(contentsOf: fixture.url("src/greet.rs"), encoding: .utf8) == "pub fn salute() {}\n")  // closed: disk
+        await workspace.shutdown()
     }
 }
 
 @MainActor
 @Suite struct WorkspaceCodeActionTests {
-    @Test(.enabled(if: RustIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
-    func appliesEditActionsAndCommandActions() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-ca-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: base) }
-        let dir = base.canonicalFileURL
-        try "module example.com/ca\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        try "package main\n\nimport \"os\"\n\nfunc Add(a, b int) int { return a + b }\n\nfunc main() {}\n"
-            .write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(2)))
+    func resolvesAndAppliesAssists() async throws {
+        let main = "fn main() {\n    let answer = 40 + 2;\n    println!(\"{answer}\");\n}\n"
+        let fixture = try RustAnalyzerFixture(["src/main.rs": main])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
+        let document = try #require(workspace.activeDocument)
 
-        let workspace = Workspace()
-        await workspace.openFolder(dir)
-        let main = try #require(workspace.activeDocument)
-        // Wait for gopls to publish the unused-import diagnostic.
-        for _ in 0..<50 where workspace.diagnostics(for: main).isEmpty { try await Task.sleep(for: .milliseconds(100)) }
-        let importOffset = ("package main\n\nimport \"" as NSString).length
-
-        // An action with an edit.
-        let actions = await workspace.codeActions(in: main, at: importOffset)
-        let organize = try #require(actions.first { $0.kind == "source.organizeImports" })
-        await workspace.perform(organize)
-        #expect(!main.text.contains("\"os\""))
-
-        // A command action: gopls answers with workspace/applyEdit creating main_test.go.
-        let addOffset = ("package main\n\nfunc Ad" as NSString).length
-        let addTest = try #require(await workspace.codeActions(in: main, at: addOffset).first { $0.kind == "source.addTest" })
-        await workspace.perform(addTest)
-        let testFile = dir.appendingPathComponent("main_test.go")
-        for _ in 0..<50 where workspace.activeDocument?.name != "main_test.go" { try await Task.sleep(for: .milliseconds(100)) }
-        #expect(workspace.activeDocument?.name == "main_test.go")
-        #expect(workspace.activeDocument?.text.contains("func TestAdd") == true)
-        #expect(FileManager.default.fileExists(atPath: testFile.path))
+        // rust-analyzer assists come without an edit; perform() resolves them first.
+        let actions = await workspace.codeActions(in: document, at: (main as NSString).range(of: "answer").location + 2)
+        let explicit = try #require(actions.first { $0.title.localizedCaseInsensitiveContains("explicit type") },
+                                    "\(actions.map(\.title))")
+        await workspace.perform(explicit)
+        #expect(document.text.contains("let answer: i32 = 40 + 2;"), "\(document.text)")
+        await workspace.shutdown()
     }
 }
 
 @MainActor
 @Suite struct WorkspaceNavigationTests {
-    @Test(.enabled(if: RustIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(2)))
     func quickOpenFindsFilesAndSymbolsAndOutlineLoads() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-nav-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: base.appendingPathComponent("internal/progress"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: base) }
-        let dir = base.canonicalFileURL
-        try "module example.com/nav\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        try "package main\n\ntype Greeter struct{}\n\nfunc (Greeter) Hello() {}\n\nfunc main() {}\n"
-            .write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-        try "package main\n".write(to: dir.appendingPathComponent("greet.go"), atomically: true, encoding: .utf8)
-        try "package progress\n".write(to: dir.appendingPathComponent("internal/progress/report.go"), atomically: true, encoding: .utf8)
-
-        let workspace = Workspace()
-        await workspace.openFolder(dir)
+        let fixture = try RustAnalyzerFixture([
+            "src/main.rs": "mod greet;\nmod progress;\n\nstruct Greeter;\n\nimpl Greeter {\n    fn hello(&self) {}\n}\n\nfn main() {}\n",
+            "src/greet.rs": "\n",
+            "src/progress/mod.rs": "mod report;\n",
+            "src/progress/report.rs": "\n",
+        ])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
         workspace.showQuickOpen()
-        #expect(workspace.quickOpenItems.map(\.title) == ["main.go"])  // empty query: open tabs
+        #expect(workspace.quickOpenItems.map(\.title) == ["main.rs"])  // empty query: open tabs
 
         workspace.quickOpenQuery = "gre"
         workspace.updateQuickOpen()
-        #expect(workspace.quickOpenItems.first?.title == "greet.go")
-        // gopls may still be loading packages on a cold (CI) start: re-ask, as typing would.
-        // (Each re-ask cancels the request in flight, so leave it time to answer.)
+        #expect(workspace.quickOpenItems.first?.title == "greet.rs")
+        // Symbols arrive asynchronously: re-ask, as typing would.
         for _ in 0..<12 where !workspace.quickOpenItems.contains(where: { $0.position != nil }) {
             try await Task.sleep(for: .milliseconds(1500))
             if !workspace.quickOpenItems.contains(where: { $0.position != nil }) { workspace.updateQuickOpen() }
@@ -306,10 +262,11 @@ import RustIDECore
         let symbol = try #require(workspace.quickOpenItems.first { $0.title == "Greeter" })
         workspace.open(symbol)
         #expect(!workspace.isQuickOpenVisible)
-        #expect(workspace.activeDocument?.revealTarget?.position == TextPosition(line: 2, character: 5))
+        #expect(workspace.activeDocument?.revealTarget?.position == TextPosition(line: 3, character: 7))
 
         await workspace.refreshOutline()
         #expect(workspace.outline.map(\.name).contains("Greeter"))
+        await workspace.shutdown()
     }
 }
 
@@ -317,24 +274,24 @@ import RustIDECore
 @Suite struct WorkspaceGitTests {
     @Test(.enabled(if: RustIDECore.ToolLocator.find("git") != nil), .timeLimit(.minutes(1)))
     func tracksBranchStatusesAndBases() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-ws-git-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-ws-git-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL
         Git.run(["init", "-q", "-b", "feature"], in: dir)
         try "module example.com/g\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        try "package main\n\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+        try "package main\n\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.rs"), atomically: true, encoding: .utf8)
         Git.run(["add", "."], in: dir)
         Git.run(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"], in: dir)
-        try "package main\n\n// changed\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-        try "package main\n".write(to: dir.appendingPathComponent("new.go"), atomically: true, encoding: .utf8)
+        try "package main\n\n// changed\nfunc main() {}\n".write(to: dir.appendingPathComponent("main.rs"), atomically: true, encoding: .utf8)
+        try "package main\n".write(to: dir.appendingPathComponent("new.rs"), atomically: true, encoding: .utf8)
 
         let workspace = Workspace()
         await workspace.openFolder(dir)
         for _ in 0..<50 where workspace.gitBranch == nil { try await Task.sleep(for: .milliseconds(100)) }
         #expect(workspace.gitBranch == "feature")
-        #expect(workspace.gitStatus(for: dir.appendingPathComponent("main.go")) == .modified)
-        #expect(workspace.gitStatus(for: dir.appendingPathComponent("new.go")) == .untracked)
+        #expect(workspace.gitStatus(for: dir.appendingPathComponent("main.rs")) == .modified)
+        #expect(workspace.gitStatus(for: dir.appendingPathComponent("new.rs")) == .untracked)
         #expect(workspace.gitStatus(for: dir.appendingPathComponent("go.mod")) == nil)
         let main = try #require(workspace.activeDocument)
         #expect(workspace.gitBase(for: main) == "package main\n\nfunc main() {}\n")
@@ -346,33 +303,33 @@ import RustIDECore
 @MainActor
 @Suite(.serialized) struct SessionRestoreTests {
     @Test func restoresTabsAndRecents() async throws {
-        let suite = "goide-tests-\(UUID().uuidString)"
+        let suite = "rustide-tests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         SessionStore.defaults = defaults
         defer {
             SessionStore.defaults = .standard
             defaults.removePersistentDomain(forName: suite)
         }
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-session-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-session-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL
-        for name in ["main.go", "a.go", "b.go"] {
+        for name in ["main.rs", "a.rs", "b.rs"] {
             try "package main\n".write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
         }
 
         let first = Workspace()
         await first.openFolder(dir)
-        #expect(first.documents.map(\.name) == ["main.go"])  // nothing saved yet: default file
-        first.openFile(dir.appendingPathComponent("a.go"))
-        first.openFile(dir.appendingPathComponent("b.go"))
+        #expect(first.documents.map(\.name) == ["main.rs"])  // nothing saved yet: default file
+        first.openFile(dir.appendingPathComponent("a.rs"))
+        first.openFile(dir.appendingPathComponent("b.rs"))
         first.activate(first.documents[1])  // a.go
         await first.shutdown()
 
         let second = Workspace()
         await second.openFolder(dir)
-        #expect(second.documents.map(\.name) == ["main.go", "a.go", "b.go"])
-        #expect(second.activeDocument?.name == "a.go")
+        #expect(second.documents.map(\.name) == ["main.rs", "a.rs", "b.rs"])
+        #expect(second.activeDocument?.name == "a.rs")
         #expect(SessionStore.recentProjects.first?.path == dir.path)
         await second.shutdown()
     }
@@ -381,12 +338,12 @@ import RustIDECore
 @MainActor
 @Suite struct WorkspaceReplaceTests {
     @Test func replacesInOpenBuffersAndOnDisk() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-replace-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-replace-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL
-        try "package main\n\nfunc main() { getUser(); getName() }\n".write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-        let other = dir.appendingPathComponent("other.go")
+        try "package main\n\nfunc main() { getUser(); getName() }\n".write(to: dir.appendingPathComponent("main.rs"), atomically: true, encoding: .utf8)
+        let other = dir.appendingPathComponent("other.rs")
         try "package main\n\nfunc getUser() {}\nfunc getName() {}\n".write(to: other, atomically: true, encoding: .utf8)
 
         let workspace = Workspace()
@@ -399,7 +356,7 @@ import RustIDECore
         #expect(workspace.searchMatchCount == 4)
 
         // One match first: the second call in main.go (still in the buffer).
-        let mainResult = try #require(workspace.searchResults.first { $0.path.hasSuffix("main.go") })
+        let mainResult = try #require(workspace.searchResults.first { $0.path.hasSuffix("main.rs") })
         await workspace.replace(mainResult.matches[1], in: mainResult)
         #expect(main.text.contains("getUser(); fetchName()") && main.isDirty)
 
@@ -412,46 +369,98 @@ import RustIDECore
 
 @MainActor
 @Suite struct WorkspaceImplementationTests {
-    @Test(.enabled(if: RustIDECore.ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(2)))
     func findsImplementationsAndTypeDefinitions() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-impl-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: base) }
-        let dir = base.canonicalFileURL
-        try "module example.com/impl\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
         let source = """
-            package main
+            trait Shape {
+                fn area(&self) -> f64;
+            }
 
-            type Shape interface{ Area() float64 }
+            struct Square {
+                s: f64,
+            }
 
-            type Square struct{ s float64 }
+            impl Shape for Square {
+                fn area(&self) -> f64 { self.s * self.s }
+            }
 
-            func (q Square) Area() float64 { return q.s * q.s }
+            struct Circle {
+                r: f64,
+            }
 
-            type Circle struct{ r float64 }
+            impl Shape for Circle {
+                fn area(&self) -> f64 { 3.0 * self.r * self.r }
+            }
 
-            func (c Circle) Area() float64 { return 3 * c.r * c.r }
-
-            func main() {
-            \tsq := Square{2}
-            \t_ = sq
+            fn main() {
+                let sq = Square { s: 2.0 };
+                let _ = &sq;
             }
 
             """
-        try source.write(to: dir.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
-
-        let workspace = Workspace()
-        await workspace.openFolder(dir)
+        let fixture = try RustAnalyzerFixture(["src/main.rs": source])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
         let main = try #require(workspace.activeDocument)
         let ns = main.text as NSString
 
-        // Interface with two implementations: listed.
+        // Trait with two implementations: listed.
         await workspace.jumpToImplementation(from: main, at: ns.range(of: "Shape").location + 1)
         #expect(workspace.referenceTitle == "2 implementations of ‘Shape’")
         #expect(workspace.referenceResults.first?.matches.count == 2)
 
         // Variable → its type: jumps (one location).
-        await workspace.jumpToTypeDefinition(from: main, at: ns.range(of: "_ = sq").location + 5)
-        #expect(main.revealTarget?.position == TextPosition(line: 4, character: 5))  // type Square
+        await workspace.jumpToTypeDefinition(from: main, at: ns.range(of: "&sq").location + 2)
+        #expect(main.revealTarget?.position == TextPosition(line: 4, character: 7))  // struct Square
+        await workspace.shutdown()
     }
+}
+
+
+/// A temp Cargo crate opened in a real Workspace, waiting until rust-analyzer is quiescent.
+@MainActor
+struct RustAnalyzerFixture {
+    nonisolated static var available: Bool {
+        guard let server = RustIDECore.ToolLocator.find("rust-analyzer") else { return false }
+        let process = Process()
+        process.executableURL = server
+        process.arguments = ["--version"]
+        process.environment = RustIDECore.ToolLocator.environment()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
+    let dir: URL
+
+    init(_ files: [String: String]) throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-ws-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        dir = base.canonicalFileURL
+        var files = files
+        if files["Cargo.toml"] == nil {
+            files["Cargo.toml"] = "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+        }
+        for (path, contents) in files {
+            let url = dir.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func url(_ path: String) -> URL { dir.appendingPathComponent(path) }
+
+    func openWorkspace() async throws -> Workspace {
+        let workspace = Workspace()
+        await workspace.openFolder(dir)
+        for _ in 0..<900 where workspace.lspStatus != "rust-analyzer: ready" {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(workspace.lspStatus == "rust-analyzer: ready")
+        return workspace
+    }
+
+    func remove() { try? FileManager.default.removeItem(at: dir) }
 }

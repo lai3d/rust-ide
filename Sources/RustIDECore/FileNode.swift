@@ -10,7 +10,7 @@ public struct FileNode: Identifiable, Hashable, Sendable {
     public var id: URL { url }
     public var name: String { url.lastPathComponent }
 
-    public static let ignoredNames: Set<String> = [".git", ".build", ".idea", ".vscode", "node_modules", "vendor"]
+    public static let ignoredNames: Set<String> = [".git", ".build", ".idea", ".vscode", "node_modules", "target"]
 
     public init(url: URL, isDirectory: Bool, children: [FileNode]?) {
         self.url = url

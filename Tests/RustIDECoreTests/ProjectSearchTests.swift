@@ -28,26 +28,26 @@ import Testing
     }
 
     @Test func searchesProjectFilesSkippingIgnoredAndBinary() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("goide-search-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-search-\(UUID().uuidString)")
         let fm = FileManager.default
-        for dir in ["pkg", "vendor/x", ".git"] {
+        for dir in ["pkg", "target/x", ".git"] {
             try fm.createDirectory(at: root.appendingPathComponent(dir), withIntermediateDirectories: true)
         }
         defer { try? fm.removeItem(at: root) }
-        try "needle\n".write(to: root.appendingPathComponent("a.go"), atomically: true, encoding: .utf8)
-        try "x\nneedle needle\n".write(to: root.appendingPathComponent("pkg/b.go"), atomically: true, encoding: .utf8)
-        try "needle\n".write(to: root.appendingPathComponent("vendor/x/c.go"), atomically: true, encoding: .utf8)
+        try "needle\n".write(to: root.appendingPathComponent("a.rs"), atomically: true, encoding: .utf8)
+        try "x\nneedle needle\n".write(to: root.appendingPathComponent("pkg/b.rs"), atomically: true, encoding: .utf8)
+        try "needle\n".write(to: root.appendingPathComponent("target/x/c.rs"), atomically: true, encoding: .utf8)
         try "needle\n".write(to: root.appendingPathComponent(".git/config"), atomically: true, encoding: .utf8)
         try Data([0x6E, 0x65, 0x65, 0x64, 0x6C, 0x65, 0x00]).write(to: root.appendingPathComponent("bin"))
 
         let results = try ProjectSearch.search(root: root, query: "needle", options: .init())
-        #expect(results.map { ($0.path as NSString).lastPathComponent } == ["a.go", "b.go"])
+        #expect(results.map { ($0.path as NSString).lastPathComponent } == ["a.rs", "b.rs"])
         #expect(results.last?.matches.count == 2)
 
         // Unsaved buffers win over disk contents.
-        let a = root.appendingPathComponent("a.go").path
+        let a = root.appendingPathComponent("a.rs").path
         let overridden = try ProjectSearch.search(root: root, query: "needle", options: .init(), overrides: [a: "nothing"])
-        #expect(overridden.map { ($0.path as NSString).lastPathComponent } == ["b.go"])
+        #expect(overridden.map { ($0.path as NSString).lastPathComponent } == ["b.rs"])
     }
 }
 

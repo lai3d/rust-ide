@@ -21,7 +21,7 @@ import Testing
 
     @Test(.enabled(if: ToolLocator.find("git") != nil))
     func readsRealRepository() throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-git-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-git-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL
@@ -77,7 +77,7 @@ import Testing
 
     @Test(.enabled(if: ToolLocator.find("git") != nil))
     func stagesUnstagesDiscardsAndCommits() throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-scm-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-scm-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL

@@ -51,48 +51,17 @@ import Testing
     }
 }
 
-@Suite struct GoplsFormattingTests {
-    @Test(.enabled(if: ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
-    func organizesImportsAndFormats() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-fmt-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        let source = "package main\n\nimport \"os\"\n\nfunc main(){\nfmt.Println( strings.ToUpper(\"x\") )\n}\n"
-        let file = dir.appendingPathComponent("main.go")
-        try source.write(to: file, atomically: true, encoding: .utf8)
-        let uri = JSONValue.string(file.absoluteString)
-
-        let client = LSPClient()
-        try client.start(executable: try #require(ToolLocator.find("gopls")),
-                         environment: ToolLocator.environment(), currentDirectory: dir)
-        _ = try await client.request("initialize", params: [
-            "processId": .int(Int(getpid())), "rootUri": .string(dir.absoluteString),
-            "capabilities": ["textDocument": ["codeAction": ["codeActionLiteralSupport": [
-                "codeActionKind": ["valueSet": ["source.organizeImports"]]]]]],
-        ])
-        try client.notify("initialized", params: [:])
-        try client.notify("textDocument/didOpen", params: [
-            "textDocument": ["uri": uri, "languageId": "go", "version": 1, "text": .string(source)],
-        ])
-
-        let actions = CodeAction.parseAll(try await client.request("textDocument/codeAction", params: [
-            "textDocument": ["uri": uri],
-            "range": ["start": ["line": 0, "character": 0], "end": ["line": 0, "character": 0]],
-            "context": ["diagnostics": [], "only": ["source.organizeImports"]],
-        ]))
-        let organize = try #require(actions.first { $0.kind == "source.organizeImports" })
-        let organized = TextEdit.apply(organize.edit?.changes[file.absoluteString] ?? [], to: source)
-        #expect(organized.contains("\"fmt\"") && organized.contains("\"strings\"") && !organized.contains("\"os\""))
-
-        try client.notify("textDocument/didChange", params: [
-            "textDocument": ["uri": uri, "version": 2], "contentChanges": [["text": .string(organized)]],
-        ])
-        let formatEdits = (try await client.request("textDocument/formatting", params: [
-            "textDocument": ["uri": uri], "options": ["tabSize": 4, "insertSpaces": false],
+@Suite struct RustAnalyzerFormattingTests {
+    @Test(.enabled(if: RustAnalyzerHarness.available), .timeLimit(.minutes(2)))
+    func formatsWithRustfmt() async throws {
+        let source = "fn main(){\nlet x=vec![1,2 ,3];\nprintln!( \"{:?}\" ,x );\n}\n"
+        let ra = try await RustAnalyzerHarness(files: ["src/main.rs": source])
+        try await ra.open("src/main.rs")
+        let edits = (try await ra.request("textDocument/formatting", [
+            "textDocument": ["uri": ra.uri("src/main.rs")], "options": ["tabSize": 4, "insertSpaces": true],
         ])).arrayValue?.compactMap(TextEdit.parse) ?? []
-        let formatted = TextEdit.apply(formatEdits, to: organized)
-        #expect(formatted.contains("func main() {\n\tfmt.Println(strings.ToUpper(\"x\"))\n}"))
-        await client.shutdown()
+        let formatted = TextEdit.apply(edits, to: source)
+        #expect(formatted == "fn main() {\n    let x = vec![1, 2, 3];\n    println!(\"{:?}\", x);\n}\n", "\(formatted)")
+        await ra.shutdown()
     }
 }

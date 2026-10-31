@@ -97,68 +97,45 @@ import Testing
     }
 }
 
-/// End-to-end checks against a real gopls (skipped when gopls isn't installed).
-@Suite struct GoplsLanguageFeatureTests {
+/// End-to-end checks against a real rust-analyzer (skipped when it isn't installed).
+@Suite struct RustAnalyzerLanguageFeatureTests {
     static let source = """
-        package main
+        fn helper() -> i32 {
+            1
+        }
 
-        import "fmt"
-
-        func helper() int { return 1 }
-
-        func main() {
-        \tfmt.Println(helper())
-        \tfmt.Pri
+        fn main() {
+            let v: Vec<i32> = Vec::new();
+            println!("{}", helper());
+            v.ite
         }
 
         """
 
-    @Test(.enabled(if: ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+    @Test(.enabled(if: RustAnalyzerHarness.available), .timeLimit(.minutes(2)))
     func completionHoverAndDefinition() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        let file = dir.appendingPathComponent("main.go")
-        try Self.source.write(to: file, atomically: true, encoding: .utf8)
+        let ra = try await RustAnalyzerHarness(files: ["src/main.rs": Self.source],
+                                               textDocument: ["hover": ["contentFormat": ["markdown"]]])
+        try await ra.open("src/main.rs")
 
-        let client = LSPClient()
-        try client.start(executable: try #require(ToolLocator.find("gopls")),
-                         environment: ToolLocator.environment(), currentDirectory: dir)
-        _ = try await client.request("initialize", params: [
-            "processId": .int(Int(getpid())),
-            "rootUri": .string(dir.absoluteString),
-            "capabilities": ["textDocument": ["hover": ["contentFormat": ["markdown"]]]],
-        ])
-        try client.notify("initialized", params: [:])
-        try client.notify("textDocument/didOpen", params: [
-            "textDocument": ["uri": .string(file.absoluteString), "languageId": "go", "version": 1,
-                             "text": .string(Self.source)],
-        ])
-        func at(_ line: Int, _ character: Int) -> JSONValue {
-            ["textDocument": ["uri": .string(file.absoluteString)],
-             "position": TextPosition(line: line, character: character).json]
-        }
+        // `    v.ite|` on line 7
+        let items = CompletionItem.parseList(try await ra.request("textDocument/completion", ra.at("src/main.rs", 7, 9)))
+        #expect(items.contains { $0.label.hasPrefix("iter") }, "\(items.map(\.label))")
 
-        // `\tfmt.Pri|` on line 8
-        let items = CompletionItem.parseList(try await client.request("textDocument/completion", params: at(8, 8)))
-        #expect(items.contains { $0.label == "Println" && $0.insertText == "Println" })
-        #expect(items.allSatisfy { FuzzyMatch.matches("Pri", $0.filterText) })
+        // Hover on `helper` in the call (line 6)
+        let hover = HoverContent.parse(try await ra.request("textDocument/hover", ra.at("src/main.rs", 6, 21)))
+        #expect(hover?.contains("fn helper() -> i32") == true, "hover was: \(hover ?? "nil")")
 
-        // Hover on `Println` (line 7)
-        let hover = HoverContent.parse(try await client.request("textDocument/hover", params: at(7, 7)))
-        #expect(hover?.contains("Println(a ...any)") == true, "hover was: \(hover ?? "nil")")
+        // Definition of `helper` → line 0
+        let locations = Location.parseAll(try await ra.request("textDocument/definition", ra.at("src/main.rs", 6, 21)))
+        #expect(locations.first?.uri.hasSuffix("/src/main.rs") == true)
+        #expect(locations.first?.start.line == 0)
 
-        // Definition of `helper` (line 7, inside the call) -> line 4
-        let locations = Location.parseAll(try await client.request("textDocument/definition", params: at(7, 15)))
-        #expect(locations.first?.uri.hasSuffix("/main.go") == true)
-        #expect(locations.first?.start.line == 4)
+        // Definition of `Vec` → the standard library sources
+        let stdlib = Location.parseAll(try await ra.request("textDocument/definition", ra.at("src/main.rs", 5, 12)))
+        #expect(stdlib.first?.uri.hasSuffix("/alloc/src/vec/mod.rs") == true, "\(stdlib)")
 
-        // Definition of `Println` -> the standard library
-        let stdlib = Location.parseAll(try await client.request("textDocument/definition", params: at(7, 7)))
-        #expect(stdlib.first?.uri.hasSuffix("/fmt/print.go") == true)
-
-        await client.shutdown()
+        await ra.shutdown()
     }
 }
 

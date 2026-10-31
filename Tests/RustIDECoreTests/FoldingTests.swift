@@ -14,36 +14,22 @@ import Testing
         #expect(FoldRegion.parseAll([["startLine": 3, "endLine": 3]]).isEmpty)
     }
 
-    @Test(.enabled(if: ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
-    func goplsFoldingRanges() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-fold-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        let source = "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nfunc main() {\n\tfmt.Println(os.Args)\n\tif true {\n\t\tfmt.Println()\n\t}\n}\n"
-        let file = dir.appendingPathComponent("main.go")
-        try source.write(to: file, atomically: true, encoding: .utf8)
-
-        let client = LSPClient()
-        try client.start(executable: try #require(ToolLocator.find("gopls")),
-                         environment: ToolLocator.environment(), currentDirectory: dir)
-        _ = try await client.request("initialize", params: [
-            "processId": .int(Int(getpid())), "rootUri": .string(dir.absoluteString),
-            "capabilities": ["textDocument": ["foldingRange": ["lineFoldingOnly": false]]],
-        ])
-        try client.notify("initialized", params: [:])
-        try client.notify("textDocument/didOpen", params: [
-            "textDocument": ["uri": .string(file.absoluteString), "languageId": "go", "version": 1, "text": .string(source)],
-        ])
-        let regions = FoldRegion.parseAll(try await client.request("textDocument/foldingRange", params: [
-            "textDocument": ["uri": .string(file.absoluteString)],
+    @Test(.enabled(if: RustAnalyzerHarness.available), .timeLimit(.minutes(2)))
+    func rustAnalyzerFoldingRanges() async throws {
+        let source = "use std::{\n    env,\n    fs,\n};\n\nfn main() {\n    println!(\"{:?}\", env::args());\n    if true {\n        let _ = fs::read(\"x\");\n    }\n}\n"
+        let ra = try await RustAnalyzerHarness(files: ["src/main.rs": source],
+                                               textDocument: ["foldingRange": ["lineFoldingOnly": false]])
+        try await ra.open("src/main.rs")
+        let regions = FoldRegion.parseAll(try await ra.request("textDocument/foldingRange", [
+            "textDocument": ["uri": ra.uri("src/main.rs")],
         ]))
         let index = LineIndex(source)
-        let folded = regions.compactMap { $0.hiddenRange(in: index) }.map { (source as NSString).replacingCharacters(in: $0, with: "⋯") }
-        #expect(regions.contains { $0.startLine == 2 })  // import block
-        #expect(regions.contains { $0.startLine == 7 })  // func body
-        #expect(regions.contains { $0.startLine == 9 })  // if block
-        #expect(folded.contains { $0.contains("func main() {⋯}") })
-        await client.shutdown()
+        let folded = regions.compactMap { $0.hiddenRange(in: index, text: source as NSString) }.map { (source as NSString).replacingCharacters(in: $0, with: "⋯") }
+        #expect(regions.contains { $0.startLine == 0 })  // use block
+        #expect(regions.contains { $0.startLine == 5 })  // fn body
+        #expect(regions.contains { $0.startLine == 7 })  // if block
+        #expect(folded.contains { $0.contains("fn main() {⋯}") }, "\(folded)")
+        #expect(folded.contains { $0.hasPrefix("use std::{⋯};") })
+        await ra.shutdown()
     }
 }

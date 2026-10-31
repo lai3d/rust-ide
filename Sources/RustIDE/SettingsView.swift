@@ -57,14 +57,14 @@ private struct ToolsSettingsTab: View {
     var body: some View {
         Form {
             Section {
-                ToolPathRow(name: "go", hint: "https://go.dev/dl/")
-                ToolPathRow(name: "gopls", hint: "go install golang.org/x/tools/gopls@latest")
+                ToolPathRow(name: "cargo", hint: "https://rustup.rs")
+                ToolPathRow(name: "rust-analyzer", hint: "rustup component add rust-analyzer")
                 ToolPathRow(name: "dlv", hint: "go install github.com/go-delve/delve/cmd/dlv@latest")
             } footer: {
-                Text("Leave empty to search PATH, $GOBIN, $GOPATH/bin, ~/go/bin and Homebrew.")
+                Text("Leave empty to search PATH, $CARGO_HOME/bin, ~/.cargo/bin and Homebrew.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Button("Restart gopls") { Task { await workspace.restartLanguageServer() } }
+            Button("Restart rust-analyzer") { Task { await workspace.restartLanguageServer() } }
                 .disabled(workspace.rootURL == nil)
         }
     }

@@ -35,35 +35,20 @@ import Testing
         #expect(ranked.first?.0 == "greet.go")
     }
 
-    @Test(.enabled(if: ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
-    func goplsDocumentAndWorkspaceSymbols() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-sym-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        let source = "package main\n\ntype Server struct {\n\tAddr string\n}\n\nfunc (s *Server) Start() {}\n\nfunc main() {}\n"
-        let file = dir.appendingPathComponent("main.go")
-        try source.write(to: file, atomically: true, encoding: .utf8)
-
-        let client = LSPClient()
-        try client.start(executable: try #require(ToolLocator.find("gopls")),
-                         environment: ToolLocator.environment(), currentDirectory: dir)
-        _ = try await client.request("initialize", params: [
-            "processId": .int(Int(getpid())), "rootUri": .string(dir.absoluteString),
-            "capabilities": ["textDocument": ["documentSymbol": ["hierarchicalDocumentSymbolSupport": true]]],
-        ])
-        try client.notify("initialized", params: [:])
-        try client.notify("textDocument/didOpen", params: [
-            "textDocument": ["uri": .string(file.absoluteString), "languageId": "go", "version": 1, "text": .string(source)],
-        ])
-        let outline = SymbolNode.parseAll(try await client.request("textDocument/documentSymbol", params: [
-            "textDocument": ["uri": .string(file.absoluteString)],
+    @Test(.enabled(if: RustAnalyzerHarness.available), .timeLimit(.minutes(2)))
+    func rustAnalyzerDocumentAndWorkspaceSymbols() async throws {
+        let source = "struct Server {\n    addr: String,\n}\n\nimpl Server {\n    fn start(&self) {}\n}\n\nfn main() {}\n"
+        let ra = try await RustAnalyzerHarness(files: ["src/main.rs": source],
+                                               textDocument: ["documentSymbol": ["hierarchicalDocumentSymbolSupport": true]])
+        try await ra.open("src/main.rs")
+        let outline = SymbolNode.parseAll(try await ra.request("textDocument/documentSymbol", [
+            "textDocument": ["uri": ra.uri("src/main.rs")],
         ]))
         #expect(outline.map(\.name).contains("Server"))
-        #expect(outline.first { $0.name == "Server" }?.children?.map(\.name) == ["Addr"])
+        #expect(outline.first { $0.name == "Server" }?.children?.map(\.name) == ["addr"])
 
-        let symbols = SymbolNode.parseAll(try await client.request("workspace/symbol", params: ["query": "Start"]))
-        #expect(symbols.contains { $0.name.contains("Start") && $0.uri?.hasSuffix("/main.go") == true })
-        await client.shutdown()
+        let symbols = SymbolNode.parseAll(try await ra.request("workspace/symbol", ["query": "start"]))
+        #expect(symbols.contains { $0.name.contains("start") && $0.uri?.hasSuffix("/src/main.rs") == true }, "\(symbols)")
+        await ra.shutdown()
     }
 }

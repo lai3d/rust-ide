@@ -18,7 +18,7 @@ import Testing
     }
 
     @Test func findsMainPackages() throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-mains-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-mains-\(UUID().uuidString)")
         let fm = FileManager.default
         for dir in ["cmd/server", "cmd/cli", "internal/lib"] {
             try fm.createDirectory(at: base.appendingPathComponent(dir), withIntermediateDirectories: true)

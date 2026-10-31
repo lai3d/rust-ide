@@ -25,4 +25,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" build/RustIDE.zip \
             --title "RustIDE $GITHUB_REF_NAME" \
             --generate-notes \
-            --notes "Ad-hoc signed build: the first time, right-click RustIDE.app and choose Open (or run: xattr -dr com.apple.quarantine RustIDE.app). Requires macOS 14+, Go, gopls and dlv."
+            --notes "Ad-hoc signed build: the first time, right-click RustIDE.app and choose Open (or run: xattr -dr com.apple.quarantine RustIDE.app). Requires macOS 14+ and a Rust toolchain (rustup) with rust-analyzer."

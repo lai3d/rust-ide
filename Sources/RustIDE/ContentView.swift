@@ -311,7 +311,7 @@ struct DocumentEditor: View {
     var body: some View {
         CodeEditorView(
             text: document.text,
-            highlightGo: document.isGo,
+            highlightRust: document.isRust,
             isTestFile: document.name.hasSuffix("_test.go"),
             testStatuses: workspace.testStatuses,
             breakpoints: workspace.breakpointLines(for: document),

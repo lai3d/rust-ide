@@ -1,14 +1,21 @@
 import Foundation
 
-/// gopls settings RustIDE relies on (sent as initializationOptions and workspace/configuration).
-public enum GoplsSettings {
+/// rust-analyzer settings RustIDE relies on (sent as initializationOptions and
+/// answered for workspace/configuration section "rust-analyzer").
+public enum RustAnalyzerSettings {
     public static let `default`: JSONValue = [
-        "hints": [
-            "assignVariableTypes": true, "compositeLiteralFields": true, "constantValues": true,
-            "functionTypeParameters": true, "parameterNames": true, "rangeVariableTypes": true,
+        "inlayHints": [
+            "typeHints": ["enable": true],
+            "parameterHints": ["enable": true],
+            "chainingHints": ["enable": true],
+            "closingBraceHints": ["enable": false],
+            "lifetimeElisionHints": ["enable": "never"],
         ],
-        "semanticTokens": true,
-        "usePlaceholders": true,  // function call completions get parameter placeholders
+        "completion": ["callable": ["snippets": "fill_arguments"]],  // calls get parameter placeholders
+        "check": ["command": "check"],
+        "cargo": ["buildScripts": ["enable": true]],
+        "procMacro": ["enable": true],
+        "semanticHighlighting": ["strings": ["enable": false]],  // the lexer colors strings
     ]
 }
 

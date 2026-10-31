@@ -339,8 +339,8 @@ public struct InlayHint: Sendable, Hashable {
         }
     }
 
-    /// gopls settings that turn the hints on (sent as initializationOptions).
-    public static var goplsSettings: JSONValue { GoplsSettings.default }
+    /// rust-analyzer settings that turn the hints on (sent as initializationOptions).
+    public static var serverSettings: JSONValue { RustAnalyzerSettings.default }
 }
 
 // MARK: - Folding
@@ -378,5 +378,18 @@ public struct FoldRegion: Sendable, Hashable {
         let end = endCharacter.map { index.offset(of: TextPosition(line: endLine, character: $0)) } ?? lineEnd(endLine)
         guard end > start else { return nil }
         return NSRange(location: start, length: end - start)
+    }
+
+    /// Like `hiddenRange(in:)`, but keeps a surrounding bracket pair visible:
+    /// rust-analyzer's ranges include the braces, which would fold `fn f() {…}` to `fn f() ⋯`.
+    public func hiddenRange(in index: LineIndex, text: NSString) -> NSRange? {
+        guard let range = hiddenRange(in: index), range.length >= 2, NSMaxRange(range) <= text.length else {
+            return hiddenRange(in: index)
+        }
+        let pairs: [UInt16: UInt16] = [0x7B: 0x7D, 0x28: 0x29, 0x5B: 0x5D]  // {} () []
+        let first = text.character(at: range.location), last = text.character(at: NSMaxRange(range) - 1)
+        guard pairs[first] == last else { return range }
+        let inner = NSRange(location: range.location + 1, length: range.length - 2)
+        return inner.length > 0 ? inner : nil
     }
 }

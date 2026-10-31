@@ -18,8 +18,8 @@ language-specific layer.
 
 | # | Item | Notes | Est. |
 |---|---|---|---|
-| 1.1 | ⬜ rust-analyzer | Replace gopls: launch, init options, `.rs` language id, Cargo workspace root detection | 0.6h |
-| 1.2 | ⬜ Rust highlighter | Regex lexer for Rust (lifetimes, raw strings, attributes, macros, nested block comments) under semantic tokens | 0.5h |
+| 1.1 | ✅ rust-analyzer | Replaces gopls: settings, `experimental/serverStatus` ready state, rustfmt formatting, `target/` ignored; LSP tests on a shared Cargo-crate harness | 0.6h |
+| 1.2 | ✅ Rust highlighter | Hand-written lexer for Rust (lifetimes, raw strings, attributes, macros, nested block comments) under semantic tokens | 0.5h |
 | 1.3 | ⬜ Cargo build / run / check | Toolbar + Cargo menu; parse `cargo --message-format=json` diagnostics into Problems | 0.6h |
 | 1.4 | ⬜ Cargo tests | `cargo test` runner, gutter ▶ / ✓ / ✗ per `#[test]`, run at cursor / module / all | 0.7h |
 | 1.5 | ⬜ Debugger (lldb-dap) | Replace Delve: launch the built binary / test binary under `xcrun lldb-dap`, Rust variable formatting | 1–1.5h |

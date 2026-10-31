@@ -154,47 +154,47 @@ struct RustIDECommands: Commands {
                     Task { await workspace.jumpToDefinition(from: document, at: document.caretOffset) }
                 }
                 .keyboardShortcut("j", modifiers: [.control, .command])
-                .disabled(!workspace.isGoFile)
+                .disabled(!workspace.isRustFile)
                 Button("Jump to Implementation") {
                     guard let document = workspace.activeDocument else { return }
                     Task { await workspace.jumpToImplementation(from: document, at: document.caretOffset) }
                 }
                 .keyboardShortcut("j", modifiers: [.option, .command])
-                .disabled(!workspace.isGoFile)
+                .disabled(!workspace.isRustFile)
                 Button("Jump to Type Definition") {
                     guard let document = workspace.activeDocument else { return }
                     Task { await workspace.jumpToTypeDefinition(from: document, at: document.caretOffset) }
                 }
                 .keyboardShortcut("j", modifiers: [.control, .option, .command])
-                .disabled(!workspace.isGoFile)
+                .disabled(!workspace.isRustFile)
                 Button("Find References") {
                     guard let document = workspace.activeDocument else { return }
                     Task { await workspace.findReferences(in: document, at: document.caretOffset) }
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(!workspace.isGoFile)
+                .disabled(!workspace.isRustFile)
                 Button("Call Hierarchy") {
                     guard let document = workspace.activeDocument else { return }
                     Task { await workspace.showCallHierarchy(in: document, at: document.caretOffset) }
                 }
                 .keyboardShortcut("h", modifiers: [.control, .option])
-                .disabled(!workspace.isGoFile)
+                .disabled(!workspace.isRustFile)
                 Button("Go Back") { workspace.goBack() }
                     .keyboardShortcut(.leftArrow, modifiers: [.control, .command])
                     .disabled(!workspace.canGoBack)
                 Divider()
                 Button("Fold") { workspace.requestFold(.fold) }
                     .keyboardShortcut(.leftArrow, modifiers: [.option, .command])
-                    .disabled(!workspace.isGoFile)
+                    .disabled(!workspace.isRustFile)
                 Button("Unfold") { workspace.requestFold(.unfold) }
                     .keyboardShortcut(.rightArrow, modifiers: [.option, .command])
-                    .disabled(!workspace.isGoFile)
+                    .disabled(!workspace.isRustFile)
                 Button("Fold All") { workspace.requestFold(.foldAll) }
                     .keyboardShortcut(.leftArrow, modifiers: [.shift, .option, .command])
-                    .disabled(!workspace.isGoFile)
+                    .disabled(!workspace.isRustFile)
                 Button("Unfold All") { workspace.requestFold(.unfoldAll) }
                     .keyboardShortcut(.rightArrow, modifiers: [.shift, .option, .command])
-                    .disabled(!workspace.isGoFile)
+                    .disabled(!workspace.isRustFile)
                 Divider()
                 Button("Next Tab") { workspace.selectAdjacentTab(1) }
                     .keyboardShortcut("]", modifiers: [.command, .shift])
@@ -207,10 +207,10 @@ struct RustIDECommands: Commands {
                     Task { await workspace.promptRename(in: document, at: document.caretOffset) }
                 }
                 .keyboardShortcut("e", modifiers: [.control, .command])
-                .disabled(!workspace.isGoFile)
+                .disabled(!workspace.isRustFile)
                 Button("Quick Fix…") { workspace.requestQuickFix() }
                     .keyboardShortcut(.return, modifiers: .option)
-                    .disabled(!workspace.isGoFile)
+                    .disabled(!workspace.isRustFile)
             }
             CommandMenu("Debug") {
                 Button("Start Debugging") { workspace.startDebugging() }
@@ -236,7 +236,7 @@ struct RustIDECommands: Commands {
                 Divider()
                 Button("Toggle Breakpoint") { workspace.toggleBreakpointAtCaret() }
                     .keyboardShortcut("\\", modifiers: .command)
-                    .disabled(!workspace.isGoFile)
+                    .disabled(!workspace.isRustFile)
                 Button("Remove All Breakpoints") { workspace.clearBreakpoints() }
                     .disabled(workspace.breakpoints.isEmpty)
             }
@@ -288,10 +288,10 @@ struct RustIDECommands: Commands {
                 Divider()
                 Button("Format Document") { Task { await workspace.formatActiveDocument() } }
                     .keyboardShortcut("f", modifiers: [.option, .shift])
-                    .disabled(!workspace.isGoFile)
+                    .disabled(!workspace.isRustFile)
                 Toggle("Format on Save", isOn: $formatOnSave)
                 Divider()
-                Button("Restart gopls") { Task { await workspace.restartLanguageServer() } }
+                Button("Restart rust-analyzer") { Task { await workspace.restartLanguageServer() } }
             }
             }
 }

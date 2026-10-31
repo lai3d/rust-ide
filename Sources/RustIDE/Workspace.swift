@@ -111,7 +111,7 @@ final class Document: Identifiable {
     private(set) var caretPosition = TextPosition(line: 0, character: 0)
 
     var name: String { url.lastPathComponent }
-    var isGo: Bool { url.pathExtension == "go" }
+    var isRust: Bool { url.pathExtension == "rs" }
 
     init(url: URL, text: String, isReadOnly: Bool) {
         self.url = url
@@ -136,7 +136,7 @@ enum FileOperationError: LocalizedError {
     }
 }
 
-/// All state for one project folder: open documents, gopls, and go commands.
+/// All state for one project folder: open documents, rust-analyzer, and cargo commands.
 @MainActor
 @Observable
 final class Workspace {
@@ -174,7 +174,7 @@ final class Workspace {
         didSet { if activeDocument !== oldValue { saveSession() } }
     }
     private(set) var diagnostics: [String: [Diagnostic]] = [:]  // keyed by normalized path
-    private(set) var lspStatus = "gopls: not started"
+    private(set) var lspStatus = "rust-analyzer: not started"
     /// Bumped each time gopls becomes ready, so editors can (re)request hints etc.
     private(set) var languageServerEpoch = 0
     private(set) var output = ""
@@ -291,7 +291,7 @@ final class Workspace {
     @ObservationIgnored private var watcher: DirectoryWatcher?
 
     var currentFile: URL? { activeDocument?.url }
-    var isGoFile: Bool { activeDocument?.isGo ?? false }
+    var isRustFile: Bool { activeDocument?.isRust ?? false }
     var canGoBack: Bool { !backStack.isEmpty }
     var dirtyDocuments: [Document] { documents.filter(\.isDirty) }
 
@@ -597,10 +597,11 @@ final class Workspace {
 
     private func notifyWatchedFiles(_ paths: [String]) {
         guard lspReady else { return }
-        let goFiles = paths.filter {
-            $0.hasSuffix(".go") || $0.hasSuffix("/go.mod") || $0.hasSuffix("/go.sum") || $0.hasSuffix("/go.work")
+        let rustFiles = paths.filter {
+            $0.hasSuffix(".rs") || $0.hasSuffix("/Cargo.toml") || $0.hasSuffix("/Cargo.lock")
+                || $0.hasSuffix("/rust-toolchain.toml") || $0.hasSuffix("/rust-toolchain")
         }
-        let changes: [JSONValue] = goFiles.map { path in
+        let changes: [JSONValue] = rustFiles.map { path in
             let exists = FileManager.default.fileExists(atPath: path)
             return ["uri": .string(URL(fileURLWithPath: path).absoluteString), "type": .int(exists ? 2 : 3)]
         }
@@ -613,7 +614,7 @@ final class Workspace {
     @discardableResult
     func createFile(named name: String, in directory: URL) throws -> URL {
         let url = try newItemURL(named: name, in: directory)
-        let contents = url.pathExtension == "go" ? "package \(Self.packageName(for: directory))\n" : ""
+        let contents = ""
         try contents.write(to: url, atomically: true, encoding: .utf8)
         reloadTree()
         openFile(url)
@@ -672,20 +673,6 @@ final class Workspace {
         for path in diagnostics.keys where path == key || path.hasPrefix(key + "/") {
             diagnostics.removeValue(forKey: path)
         }
-    }
-
-    /// The package clause of a sibling .go file, else a name derived from the folder.
-    static func packageName(for directory: URL) -> String {
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        for file in files where file.pathExtension == "go" && !file.lastPathComponent.hasSuffix("_test.go") {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            for line in text.split(separator: "\n") where line.hasPrefix("package ") {
-                return String(line.dropFirst("package ".count)).trimmingCharacters(in: .whitespaces)
-            }
-        }
-        let name = directory.lastPathComponent.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" }
-        guard let first = name.first, !first.isNumber else { return "main" }
-        return name
     }
 
     // MARK: - Documents
@@ -802,27 +789,13 @@ final class Workspace {
 
     // MARK: - Formatting
 
-    /// Organizes imports, then formats with gopls (gofmt).
+    /// Formats with rust-analyzer (rustfmt, honoring rustfmt.toml).
     func format(_ document: Document) async {
-        guard lspReady, document.isGo, !document.isReadOnly, let lsp else { return }
-        let uri = JSONValue.string(document.url.absoluteString)
-
-        var version = document.version
-        if let result = try? await lsp.request("textDocument/codeAction", params: [
-            "textDocument": ["uri": uri],
-            "range": ["start": TextPosition(line: 0, character: 0).json, "end": TextPosition(line: 0, character: 0).json],
-            "context": ["diagnostics": [], "only": ["source.organizeImports"]],
-        ]), document.version == version {
-            for action in CodeAction.parseAll(result) where action.kind == "source.organizeImports" {
-                guard let edit = action.edit else { continue }
-                replaceText(of: document, with: TextEdit.apply(edits(for: document, in: edit), to: document.text))
-            }
-        }
-
-        version = document.version
+        guard lspReady, document.isRust, !document.isReadOnly, let lsp else { return }
+        let version = document.version
         guard let result = try? await lsp.request("textDocument/formatting", params: [
-            "textDocument": ["uri": uri],
-            "options": ["tabSize": 4, "insertSpaces": false],
+            "textDocument": ["uri": .string(document.url.absoluteString)],
+            "options": ["tabSize": 4, "insertSpaces": true],
         ]), document.version == version else { return }  // edited meanwhile: skip
         let edits = result.arrayValue?.compactMap(TextEdit.parse) ?? []
         replaceText(of: document, with: TextEdit.apply(edits, to: document.text))
@@ -860,7 +833,7 @@ final class Workspace {
             try document.text.write(to: document.url, atomically: true, encoding: .utf8)
             document.isDirty = false
             refreshGit()
-            if lspReady, document.isGo {
+            if lspReady, document.isRust {
                 try? lsp?.notify("textDocument/didSave", params: [
                     "textDocument": ["uri": .string(document.url.absoluteString)],
                 ])
@@ -883,7 +856,7 @@ final class Workspace {
         let start = GoIdentifier.prefixStart(in: ns, before: offset)
         let prefix = ns.substring(with: NSRange(location: start, length: offset - start))
         let afterDot = start > 0 && ns.character(at: start - 1) == 0x2E
-        let snippets = document.isGo && !afterDot ? GoSnippets.completions(matching: prefix) : []
+        let snippets = document.isRust && !afterDot ? GoSnippets.completions(matching: prefix) : []
         guard case let (lsp, params)? = positionRequest(document, at: offset),
               let result = try? await lsp.request("textDocument/completion", params: params)
         else { return snippets }
@@ -899,7 +872,7 @@ final class Workspace {
 
     /// Semantic tokens for the whole document (decoded with the server's legend).
     func semanticTokens(in document: Document) async -> [SemanticToken] {
-        guard lspReady, document.isGo, let lsp, let legend = semanticLegend,
+        guard lspReady, document.isRust, let lsp, let legend = semanticLegend,
               let result = try? await lsp.request("textDocument/semanticTokens/full", params: [
                   "textDocument": ["uri": .string(document.url.absoluteString)],
               ])
@@ -908,7 +881,7 @@ final class Workspace {
     }
 
     func foldingRanges(in document: Document) async -> [FoldRegion] {
-        guard lspReady, document.isGo, let lsp,
+        guard lspReady, document.isRust, let lsp,
               let result = try? await lsp.request("textDocument/foldingRange", params: [
                   "textDocument": ["uri": .string(document.url.absoluteString)],
               ])
@@ -918,7 +891,7 @@ final class Workspace {
 
     /// Inlay hints for the whole document.
     func inlayHints(in document: Document) async -> [InlayHint] {
-        guard lspReady, document.isGo, let lsp else { return [] }
+        guard lspReady, document.isRust, let lsp else { return [] }
         let lines = LineIndex(document.text).lineCount
         guard let result = try? await lsp.request("textDocument/inlayHint", params: [
             "textDocument": ["uri": .string(document.url.absoluteString)],
@@ -1130,13 +1103,13 @@ final class Workspace {
 
     /// Re-reads the active document's symbols (debounced by the caller).
     func refreshOutline() async {
-        guard let document = activeDocument, document.isGo, lspReady, let lsp,
+        guard let document = activeDocument, document.isRust, lspReady, let lsp,
               let result = try? await lsp.request("textDocument/documentSymbol", params: [
                   "textDocument": ["uri": .string(document.url.absoluteString)],
               ]),
               document === activeDocument
         else {
-            if activeDocument?.isGo != true { outline = [] }
+            if activeDocument?.isRust != true { outline = [] }
             return
         }
         outline = SymbolNode.parseAll(result)
@@ -1155,7 +1128,7 @@ final class Workspace {
 
     /// Quick fixes, refactorings and source actions at the caret (or selection).
     func codeActions(in document: Document, at offset: Int, length: Int = 0) async -> [CodeAction] {
-        guard lspReady, document.isGo, let lsp else { return [] }
+        guard lspReady, document.isRust, let lsp else { return [] }
         let index = LineIndex(document.text)
         let caret = index.position(of: offset)
         let related = diagnostics(for: document).filter { $0.contains(caret) || $0.start.line == caret.line }
@@ -1198,7 +1171,7 @@ final class Workspace {
         case "workspace/configuration":
             // Same settings as initializationOptions, so gopls keeps hints enabled.
             let items = params["items"]?.arrayValue ?? []
-            return .array(items.map { $0["section"]?.stringValue == "gopls" ? GoplsSettings.default : .null })
+            return .array(items.map { $0["section"]?.stringValue == "rust-analyzer" ? RustAnalyzerSettings.default : .null })
         case "workspace/applyEdit":
             apply(WorkspaceEdit.parse(params["edit"] ?? .null))
             return ["applied": true]
@@ -1440,7 +1413,7 @@ final class Workspace {
     }
 
     private func positionRequest(_ document: Document, at offset: Int) -> (LSPClient, JSONValue)? {
-        guard lspReady, document.isGo, let lsp else { return nil }
+        guard lspReady, document.isRust, let lsp else { return nil }
         let position = LineIndex(document.text).position(of: offset)
         return (lsp, ["textDocument": ["uri": .string(document.url.absoluteString)], "position": position.json])
     }
@@ -1454,7 +1427,7 @@ final class Workspace {
         }
     }
 
-    // MARK: - gopls
+    // MARK: - rust-analyzer
 
     func restartLanguageServer() async {
         guard let rootURL else { return }
@@ -1463,8 +1436,8 @@ final class Workspace {
     }
 
     private func startLanguageServer(root: URL) async {
-        guard let gopls = ToolLocator.find("gopls") else {
-            lspStatus = "gopls not found — go install golang.org/x/tools/gopls@latest"
+        guard let server = ToolLocator.find("rust-analyzer") else {
+            lspStatus = "rust-analyzer not found — rustup component add rust-analyzer"
             return
         }
         let client = LSPClient()
@@ -1479,25 +1452,28 @@ final class Workspace {
                 guard self.lsp === client else { return }
                 self.lsp = nil
                 self.lspReady = false
-                self.lspStatus = "gopls exited (status \(status))"
+                // rustup's proxy exits at once when the component isn't installed.
+                self.lspStatus = self.lspReady || status == 0
+                    ? "rust-analyzer exited (status \(status))"
+                    : "rust-analyzer exited — try: rustup component add rust-analyzer"
             }
         }
 
         do {
-            try client.start(executable: gopls, environment: ToolLocator.environment(), currentDirectory: root)
+            try client.start(executable: server, environment: ToolLocator.environment(), currentDirectory: root)
             lsp = client
-            lspStatus = "gopls: starting…"
+            lspStatus = "rust-analyzer: starting…"
             let initialized = try await client.request("initialize", params: Self.initializeParams(root: root))
             guard lsp === client else { return }  // folder changed while initializing
             semanticLegend = SemanticTokenLegend(initializeResult: initialized)
             try client.notify("initialized", params: [:])
             lspReady = true
-            lspStatus = "gopls: ready"
+            lspStatus = "rust-analyzer: indexing…"
             languageServerEpoch += 1
             documents.forEach(sendDidOpen)
         } catch {
             if lsp === client { lsp = nil }
-            lspStatus = "gopls failed: \(error.localizedDescription)"
+            lspStatus = "rust-analyzer failed: \(error.localizedDescription)"
         }
     }
 
@@ -1508,7 +1484,7 @@ final class Workspace {
         client.onNotification = nil
         client.onExit = nil
         client.onRequest = nil
-        lspStatus = "gopls: stopped"
+        lspStatus = "rust-analyzer: stopped"
         await client.shutdown()
     }
 
@@ -1524,18 +1500,29 @@ final class Workspace {
                 diagnostics[key] = published.diagnostics
             }
         case "window/showMessage":
-            if let message = params["message"]?.stringValue { lspStatus = "gopls: \(message)" }
+            if let message = params["message"]?.stringValue { lspStatus = "rust-analyzer: \(message)" }
+        case "experimental/serverStatus":
+            // rust-analyzer: quiescent = done loading the Cargo workspace and indexing.
+            let health = params["health"]?.stringValue ?? "ok"
+            let quiescent = params["quiescent"]?.boolValue ?? false
+            let message = params["message"]?.stringValue.map { " — \($0.split(separator: "\n").first ?? "")" } ?? ""
+            switch (health, quiescent) {
+            case ("ok", true): lspStatus = "rust-analyzer: ready"
+            case ("ok", false): lspStatus = "rust-analyzer: indexing…"
+            default: lspStatus = "rust-analyzer: \(health)\(message)"
+            }
+            if quiescent { languageServerEpoch += 1 }  // re-request hints/tokens once fully loaded
         default:
             break
         }
     }
 
     private func sendDidOpen(_ document: Document) {
-        guard lspReady, document.isGo else { return }
+        guard lspReady, document.isRust else { return }
         try? lsp?.notify("textDocument/didOpen", params: [
             "textDocument": [
                 "uri": .string(document.url.absoluteString),
-                "languageId": "go",
+                "languageId": "rust",
                 "version": .int(document.version),
                 "text": .string(document.text),
             ],
@@ -1543,7 +1530,7 @@ final class Workspace {
     }
 
     private func sendDidChange(_ document: Document) {
-        guard lspReady, document.isGo else { return }
+        guard lspReady, document.isRust else { return }
         try? lsp?.notify("textDocument/didChange", params: [
             "textDocument": ["uri": .string(document.url.absoluteString), "version": .int(document.version)],
             "contentChanges": [["text": .string(document.text)]],
@@ -1551,7 +1538,7 @@ final class Workspace {
     }
 
     private func sendDidClose(_ document: Document) {
-        guard lspReady, document.isGo else { return }
+        guard lspReady, document.isRust else { return }
         try? lsp?.notify("textDocument/didClose", params: [
             "textDocument": ["uri": .string(document.url.absoluteString)],
         ])
@@ -1609,13 +1596,14 @@ final class Workspace {
             "processId": .int(Int(ProcessInfo.processInfo.processIdentifier)),
             "clientInfo": ["name": "RustIDE", "version": "0.1.0"],
             "rootUri": .string(root.absoluteString),
-            "initializationOptions": GoplsSettings.default,
+            "initializationOptions": RustAnalyzerSettings.default,
             "workspaceFolders": [["uri": .string(root.absoluteString), "name": .string(root.lastPathComponent)]],
             "capabilities": [
                 "textDocument": textDocument,
                 "workspace": workspace,
                 "general": ["positionEncodings": ["utf-16"]],
-                "window": ["showDocument": ["support": true]],
+                "window": ["showDocument": ["support": true], "workDoneProgress": true],
+                "experimental": ["serverStatusNotification": true],
             ],
         ]
     }
@@ -1840,7 +1828,7 @@ final class Workspace {
     }
 
     func toggleBreakpointAtCaret() {
-        guard let document = activeDocument, document.isGo else { return }
+        guard let document = activeDocument, document.isRust else { return }
         toggleBreakpoint(in: document, line: LineIndex(document.text).position(of: document.caretOffset).line)
     }
 
@@ -1861,7 +1849,7 @@ final class Workspace {
             debug(test: name, in: document.url.deletingLastPathComponent())
         } else if let config = selectedRunConfiguration {
             debug(configuration: config)
-        } else if let document = activeDocument, document.isGo, !document.name.hasSuffix("_test.go") {
+        } else if let document = activeDocument, document.isRust, !document.name.hasSuffix("_test.go") {
             debug(package: document.url.deletingLastPathComponent())
         } else {
             debug(package: rootURL)
@@ -2009,7 +1997,12 @@ final class Workspace {
 
     private static func defaultFile(in nodes: [FileNode]) -> URL? {
         let files = nodes.filter { !$0.isDirectory }
-        return (files.first { $0.name == "main.go" } ?? files.first { $0.url.pathExtension == "go" })?.url
+        if let src = nodes.first(where: { $0.isDirectory && $0.name == "src" }) {
+            let children = src.children ?? []
+            if let entry = children.first(where: { $0.name == "main.rs" || $0.name == "lib.rs" }) { return entry.url }
+        }
+        return (files.first { $0.name == "main.rs" } ?? files.first { $0.url.pathExtension == "rs" }
+            ?? files.first { $0.name == "Cargo.toml" })?.url
     }
 }
 

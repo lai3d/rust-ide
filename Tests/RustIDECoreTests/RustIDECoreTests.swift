@@ -52,25 +52,52 @@ import Testing
     }
 }
 
-@Suite struct GoHighlighterTests {
-    private func kinds(_ source: String) -> [(String, GoTokenKind)] {
+@Suite struct RustHighlighterTests {
+    private func kinds(_ source: String) -> [(String, RustTokenKind)] {
         let ns = source as NSString
-        return GoHighlighter.tokenize(source).map { (ns.substring(with: $0.range), $0.kind) }
+        return RustHighlighter.tokenize(source).map { (ns.substring(with: $0.range), $0.kind) }
     }
 
     @Test func classifiesTokens() {
-        let tokens = kinds(#"func main() { x := len("hi // no") + 42 } // done"#)
-        #expect(tokens.map(\.0) == ["func", "main", "len", #""hi // no""#, "42", "// done"])
-        #expect(tokens.map(\.1) == [.keyword, .function, .builtin, .string, .number, .comment])
+        let tokens = kinds(#"fn main() { let x: u32 = len("hi // no") + 42; } // done"#)
+        #expect(tokens.map(\.0) == ["fn", "main", "let", "u32", "len", #""hi // no""#, "42", "// done"])
+        #expect(tokens.map(\.1) == [.keyword, .function, .keyword, .type, .function, .string, .number, .comment])
     }
 
-    @Test func handlesRawStringsAndTypes() {
-        let tokens = kinds("var s string = `a\n\"b\"`")
-        #expect(tokens.map(\.1) == [.keyword, .type, .string])
+    @Test func macrosAttributesAndTypes() {
+        let tokens = kinds("#[derive(Debug, Clone)]\nstruct Point { x: f64 }\nprintln!(\"{}\", a != b);")
+        #expect(tokens.map(\.0) == ["#[derive(Debug, Clone)]", "struct", "Point", "f64", "println!", "\"{}\""])
+        #expect(tokens.map(\.1) == [.attribute, .keyword, .type, .type, .macro, .string])
     }
 
-    @Test func highlightsUnterminatedBlockComment() {
+    @Test func lifetimesVersusCharLiterals() {
+        let tokens = kinds(#"fn f<'a>(s: &'a str) -> char { 'x' } let n = '\n'; 'outer: loop {}"#)
+        #expect(tokens.filter { $0.1 == .lifetime }.map(\.0) == ["'a", "'a", "'outer"])
+        #expect(tokens.filter { $0.1 == .string }.map(\.0) == ["'x'", #"'\n'"#])
+    }
+
+    @Test func rawAndByteStrings() {
+        let source = ##"let a = r#"say "hi""#; let b = b"bytes"; let c = br"raw"; let r#type = 1;"##
+        let strings = kinds(source).filter { $0.1 == .string }.map(\.0)
+        #expect(strings == [##"r#"say "hi""#"##, #"b"bytes""#, #"br"raw""#])
+    }
+
+    @Test func nestedBlockComments() {
+        let tokens = kinds("/* a /* b */ still */ fn")
+        #expect(tokens.map(\.1) == [.comment, .keyword])
         #expect(kinds("x /* open").last?.1 == .comment)
+    }
+
+    @Test func numbersWithSuffixesAndRanges() {
+        let numbers = kinds("let v = [0xFF_u8, 1_000i64, 2.5e-3f32]; for i in 0..10 {} t.0").filter { $0.1 == .number }.map(\.0)
+        #expect(numbers == ["0xFF_u8", "1_000i64", "2.5e-3f32", "0", "10", "0"])
+    }
+
+    @Test func turbofishCallsAndVariants() {
+        let tokens = kinds("let v = iter.collect::<Vec<_>>(); Some(1)")
+        #expect(tokens.contains { $0 == ("collect", .function) })
+        #expect(tokens.contains { $0 == ("Vec", .type) })
+        #expect(tokens.contains { $0 == ("Some", .builtin) })
     }
 }
 
@@ -93,41 +120,18 @@ import Testing
     }
 }
 
-/// End-to-end check against a real gopls (skipped when gopls isn't installed).
-@Suite struct GoplsIntegrationTests {
-    @Test(.enabled(if: ToolLocator.find("gopls") != nil), .timeLimit(.minutes(1)))
+/// End-to-end check against a real rust-analyzer (skipped when it isn't installed).
+@Suite struct RustAnalyzerIntegrationTests {
+    @Test(.enabled(if: RustAnalyzerHarness.available), .timeLimit(.minutes(2)))
     func publishesDiagnosticsForBrokenCode() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("goide-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "module example.com/t\n\ngo 1.22\n".write(to: dir.appendingPathComponent("go.mod"), atomically: true, encoding: .utf8)
-        let source = "package main\n\nfunc main() {\n\tundefinedThing()\n}\n"
-        let file = dir.appendingPathComponent("main.go")
-        try source.write(to: file, atomically: true, encoding: .utf8)
-
-        let (stream, continuation) = AsyncStream<[Diagnostic]>.makeStream()
-        let client = LSPClient()
-        client.onNotification = { method, params in
-            if method == "textDocument/publishDiagnostics",
-               let published = Diagnostic.parsePublish(params), !published.diagnostics.isEmpty {
-                continuation.yield(published.diagnostics)
-            }
+        let ra = try await RustAnalyzerHarness(files: ["src/main.rs": "fn main() {\n    let x: i32 = \"no\";\n}\n"])
+        try await ra.open("src/main.rs")
+        let published = try await ra.waitFor { method, params in
+            method == "textDocument/publishDiagnostics"
+                && !(Diagnostic.parsePublish(params)?.diagnostics.isEmpty ?? true)
         }
-        try client.start(executable: try #require(ToolLocator.find("gopls")),
-                         environment: ToolLocator.environment(), currentDirectory: dir)
-        _ = try await client.request("initialize", params: [
-            "processId": .int(Int(getpid())),
-            "rootUri": .string(dir.absoluteString),
-            "capabilities": [:],
-        ])
-        try client.notify("initialized", params: [:])
-        try client.notify("textDocument/didOpen", params: [
-            "textDocument": ["uri": .string(file.absoluteString), "languageId": "go", "version": 1, "text": .string(source)],
-        ])
-
-        var iterator = stream.makeAsyncIterator()
-        let diagnostics = try #require(await iterator.next())
-        #expect(diagnostics.contains { $0.message.contains("undefinedThing") && $0.start.line == 3 })
-        await client.shutdown()
+        let diagnostics = try #require(Diagnostic.parsePublish(published)).diagnostics
+        #expect(diagnostics.contains { $0.severity == .error && $0.start.line == 1 }, "\(diagnostics)")
+        await ra.shutdown()
     }
 }

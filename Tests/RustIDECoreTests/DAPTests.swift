@@ -5,7 +5,7 @@ import Testing
 @Suite struct DAPTests {
     @Test(.enabled(if: ToolLocator.find("dlv") != nil), .timeLimit(.minutes(2)))
     func launchesBreaksInspectsAndContinues() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-dap-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-dap-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL
@@ -83,7 +83,7 @@ import Testing
 @Suite struct DAPExtrasTests {
     @Test(.enabled(if: ToolLocator.find("dlv") != nil), .timeLimit(.minutes(2)))
     func conditionalBreakpointAndEvaluate() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goide-dapx-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-dapx-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let dir = base.canonicalFileURL

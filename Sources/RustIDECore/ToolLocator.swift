@@ -1,18 +1,15 @@
 import Foundation
 
-/// Finds Go tooling. GUI apps launched from Finder get a minimal PATH, so we
-/// also look in the usual Go and Homebrew install locations.
+/// Finds Rust tooling. GUI apps launched from Finder get a minimal PATH, so we
+/// also look in the usual rustup (~/.cargo/bin) and Homebrew install locations.
 public enum ToolLocator {
     public static func searchDirectories(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var dirs = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        if let gobin = environment["GOBIN"] { dirs.append(gobin) }
-        if let gopath = environment["GOPATH"] {
-            dirs += gopath.split(separator: ":").map { "\($0)/bin" }
-        }
-        dirs += ["\(home)/go/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/local/go/bin",
+        if let cargoHome = environment["CARGO_HOME"] { dirs.append("\(cargoHome)/bin") }
+        dirs += ["\(home)/.cargo/bin", "/opt/homebrew/bin", "/usr/local/bin",
                  "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         var seen = Set<String>()
         return dirs.filter { !$0.isEmpty && seen.insert($0).inserted }
@@ -40,7 +37,7 @@ public enum ToolLocator {
     }
 
     /// The current environment with PATH widened to every search directory,
-    /// so child processes (gopls, go) can find each other.
+    /// so child processes (cargo, rustc, rust-analyzer) can find each other.
     public static func environment(
         base: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String: String] {
@@ -51,7 +48,7 @@ public enum ToolLocator {
 }
 
 public extension URL {
-    /// The canonical file URL as the OS (and gopls) sees it: symlinks resolved and
+    /// The canonical file URL as the OS (and rust-analyzer) sees it: symlinks resolved and
     /// `/tmp` → `/private/tmp`. Unlike `resolvingSymlinksInPath()`, keeps `/private`.
     var canonicalFileURL: URL {
         guard isFileURL, let resolved = realpath(path, nil) else { return standardizedFileURL }

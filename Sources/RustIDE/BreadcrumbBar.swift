@@ -7,7 +7,7 @@ struct BreadcrumbBar: View {
     let document: Document
 
     var body: some View {
-        let symbols = document.isGo ? SymbolNode.path(in: workspace.outline, at: document.caretPosition) : []
+        let symbols = document.isRust ? SymbolNode.path(in: workspace.outline, at: document.caretPosition) : []
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(Array(folders.enumerated()), id: \.offset) { _, folder in
