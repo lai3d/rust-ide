@@ -22,10 +22,10 @@ language-specific layer.
 | 1.2 | ✅ Rust highlighter | Hand-written lexer for Rust (lifetimes, raw strings, attributes, macros, nested block comments) under semantic tokens | 0.5h |
 | 1.3 | ✅ Cargo build / run / check | Cargo menu: run, build, check (⇧⌘B), clippy, fmt, doc, clean, dependencies; clickable `file.rs:L:C` in Output (rust-analyzer already feeds check diagnostics to Problems) | 0.6h |
 | 1.4 | ✅ Cargo tests | libtest output parser (suites, ok / FAILED / ignored, captured failure output); `#[test]` finder with module paths; gutter ▶ / ✓ / ✗; run at caret (`-- path --exact` in the right `--lib` / `--bin` / `--test` target), package, all | 0.7h |
-| 1.5 | ⬜ Debugger (lldb-dap) | Replace Delve: launch the built binary / test binary under `xcrun lldb-dap`, Rust variable formatting | 1–1.5h |
+| 1.5 | ✅ Debugger (lldb-dap) | DAP over stdio to `xcrun lldb-dap`; builds with `--message-format=json-render-diagnostics` and debugs the artifact (run configurations or one `#[test]`); rustc's LLDB formatters for Vec / String / Option; verified on CI (needs macOS developer mode) | 1–1.5h |
 | 1.6 | ✅ Run configurations | Bins / examples from `cargo metadata` (refreshed when Cargo.toml changes), args, env, features, release profile | 0.5h |
 | 1.7 | ✅ Snippets & settings | 18 Rust snippets that complement rust-analyzer's own; space indentation (Tab, Return, ⌘] / ⌘[, electric `}`) at the tab-width setting; cargo / rust-analyzer / lldb-dap path overrides | 0.4h |
-| 1.8 | ⬜ CI & release | Rust toolchain in GitHub Actions, tagged `RustIDE-vX.Y.Z.zip`, app icon, IDE Toolbox catalog entry | 0.5h |
+| 1.8 | 🚧 CI & release | ✅ CI installs rustup + rust-analyzer and enables debugging; ✅ release workflow (`v*` tag → RustIDE.zip); ✅ app icon; ✅ folder-argument window fix; ⬜ first tag, IDE Toolbox catalog entry | 0.5h |
 
 ## Phase 2 — Rust-specific features
 

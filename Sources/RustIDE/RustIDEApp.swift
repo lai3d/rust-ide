@@ -62,6 +62,12 @@ struct WorkspaceWindow: View {
 struct RustIDEApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        // A folder in argv (`RustIDE ~/proj`, IDE Toolbox) must not count as a document to open:
+        // otherwise SwiftUI skips the first window when there's no saved window state.
+        UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+    }
+
     var body: some Scene {
         WindowGroup("RustIDE", id: "workspace") {
             WorkspaceWindow()
