@@ -272,9 +272,9 @@ struct RustIDECommands: Commands {
                     .disabled(workspace.rootURL == nil)
                 Button("Build") { workspace.buildProject() }
                     .keyboardShortcut("b")
-                Button("Check (cargo check)") { workspace.runCargo(["check", "--workspace", "--all-targets"]) }
+                Button("Check (cargo check)") { workspace.runCargoWithFeatures(["check", "--workspace", "--all-targets"]) }
                     .keyboardShortcut("b", modifiers: [.command, .shift])
-                Button("Clippy (cargo clippy)") { workspace.runCargo(["clippy", "--workspace", "--all-targets"]) }
+                Button("Clippy (cargo clippy)") { workspace.runCargoWithFeatures(["clippy", "--workspace", "--all-targets"]) }
                     .keyboardShortcut("v", modifiers: [.control, .option, .command])
                 Divider()
                 Button("Test All") { workspace.runTests(.all) }

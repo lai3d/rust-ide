@@ -56,7 +56,7 @@ enum TestScope: Equatable {
 }
 
 enum SidebarMode: Hashable {
-    case files, search, outline, git
+    case files, search, outline, git, cargo
 }
 
 /// A row in the Open Quickly palette: a file or a symbol.
@@ -387,6 +387,7 @@ final class Workspace {
         searchResults = []
         SessionStore.noteOpened(url)
         cargoMetadata = nil
+        loadEnabledFeatures()
         await loadRunConfigurations()
         if openDefaultFile {
             restoreSession(in: url)
@@ -419,8 +420,91 @@ final class Workspace {
     func refreshCargoMetadata() async {
         guard let rootURL else { return }
         let root = rootURL
-        let metadata = await Task.detached(priority: .userInitiated) { CargoMetadata.load(root: root) }.value
-        if self.rootURL == root { cargoMetadata = metadata }
+        let (metadata, locked) = await Task.detached(priority: .userInitiated) {
+            let metadata = CargoMetadata.load(root: root)
+            return (metadata, metadata.map { CargoLock.load(workspaceRoot: $0.workspaceRoot) } ?? [:])
+        }.value
+        guard self.rootURL == root else { return }
+        cargoMetadata = metadata
+        lockedVersions = locked
+        if let metadata {  // drop features that no longer exist
+            let known = Set(metadata.packages.flatMap { package in package.features.map(package.featureKey) })
+            if !enabledFeatures.isSubset(of: known) { enabledFeatures.formIntersection(known) }
+        }
+    }
+
+    // MARK: - Dependencies & features (Cargo sidebar)
+
+    /// Crate name → versions in Cargo.lock.
+    private(set) var lockedVersions: [String: [String]] = [:]
+
+    /// `package/feature` keys turned on for rust-analyzer and for build / check / test commands.
+    var enabledFeatures: Set<String> = [] {
+        didSet {
+            guard enabledFeatures != oldValue else { return }
+            if let rootURL, self !== Self.placeholder {
+                UserDefaults.standard.set(enabledFeatures.sorted(), forKey: Self.featuresKey(for: rootURL))
+            }
+            pushSettings()
+        }
+    }
+
+    private static func featuresKey(for root: URL) -> String { "cargoFeatures:" + root.path }
+
+    private func loadEnabledFeatures() {
+        guard let rootURL else { return }
+        enabledFeatures = Set(UserDefaults.standard.stringArray(forKey: Self.featuresKey(for: rootURL)) ?? [])
+    }
+
+    /// rust-analyzer settings for this project.
+    var serverSettings: JSONValue { RustAnalyzerSettings.current(features: enabledFeatures.sorted()) }
+
+    func isFeatureEnabled(_ feature: String, in package: CargoPackage) -> Bool {
+        enabledFeatures.contains(package.featureKey(feature))
+    }
+
+    func setFeature(_ feature: String, in package: CargoPackage, enabled: Bool) {
+        if enabled { enabledFeatures.insert(package.featureKey(feature)) } else { enabledFeatures.remove(package.featureKey(feature)) }
+    }
+
+    /// `--features a/x,b/y` for a command on `packages` (nil = the whole workspace).
+    func featureArguments(packages: [String]? = nil) -> [String] {
+        let selected = enabledFeatures.filter { key in
+            packages.map { names in names.contains { key.hasPrefix($0 + "/") } } ?? true
+        }
+        return selected.isEmpty ? [] : ["--features", selected.sorted().joined(separator: ",")]
+    }
+
+    /// Package names after `-p` flags in `arguments` (nil if none: the whole workspace).
+    static func selectedPackages(in arguments: [String]) -> [String]? {
+        let names = zip(arguments, arguments.dropFirst()).filter { $0.0 == "-p" }.map(\.1)
+        return names.isEmpty ? nil : names
+    }
+
+    /// `cargo check` / `clippy` / `build` for the workspace with the enabled features.
+    func runCargoWithFeatures(_ arguments: [String]) {
+        runCargo(arguments + featureArguments(packages: Self.selectedPackages(in: arguments)))
+    }
+
+    func addDependency(_ spec: String, kind: CargoDependency.Kind, to package: CargoPackage) {
+        let words = spec.split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return }
+        runCargo(["add"] + words + (kind.flag.map { [$0] } ?? []) + ["-p", package.name])
+    }
+
+    func removeDependency(_ dependency: CargoDependency, from package: CargoPackage) {
+        var arguments = ["remove", dependency.rename ?? dependency.name, "-p", package.name]
+        if let flag = dependency.kind.flag { arguments.append(flag) }
+        if let target = dependency.target { arguments += ["--target", target] }
+        runCargo(arguments)
+    }
+
+    func updateDependency(_ dependency: CargoDependency) {
+        runCargo(["update", "-p", dependency.name])
+    }
+
+    func openManifest(of package: CargoPackage) {
+        openFile(URL(fileURLWithPath: package.manifestPath))
     }
 
     private func saveRunConfigurations() {
@@ -436,7 +520,7 @@ final class Workspace {
 
     /// ⌘B: builds what Run would run (else the whole workspace).
     func buildProject() {
-        guard let config = selectedRunConfiguration else { return runCargo(["build", "--workspace"]) }
+        guard let config = selectedRunConfiguration else { return runCargoWithFeatures(["build", "--workspace"]) }
         runCargo(["build"] + config.cargoTargetArguments)
     }
 
@@ -489,8 +573,9 @@ final class Workspace {
         if paths.contains(where: { $0.contains("/.git/") || $0.hasSuffix("/.git") }) { refreshGit() }
         let relevant = paths.filter { !isIgnored(path: $0) }
         guard !relevant.isEmpty else { return }
-        if relevant.contains(where: { $0.hasSuffix("/Cargo.toml") }) || relevant.contains(where: { $0.contains("/src/bin/") || $0.contains("/examples/") }) {
-            Task { await refreshCargoMetadata() }  // targets may have changed
+        if relevant.contains(where: { $0.hasSuffix("/Cargo.toml") || $0.hasSuffix("/Cargo.lock") })
+            || relevant.contains(where: { $0.contains("/src/bin/") || $0.contains("/examples/") }) {
+            Task { await refreshCargoMetadata() }  // targets, dependencies or locked versions may have changed
         }
         reloadTree()
         notifyWatchedFiles(relevant)
@@ -1224,7 +1309,7 @@ final class Workspace {
         case "workspace/configuration":
             // Same settings as initializationOptions, with the user's current choices.
             let items = params["items"]?.arrayValue ?? []
-            return .array(items.map { $0["section"]?.stringValue == "rust-analyzer" ? RustAnalyzerSettings.current : .null })
+            return .array(items.map { $0["section"]?.stringValue == "rust-analyzer" ? serverSettings : .null })
         case "workspace/applyEdit":
             apply(WorkspaceEdit.parse(params["edit"] ?? .null))
             return ["applied": true]
@@ -1516,7 +1601,7 @@ final class Workspace {
             try client.start(executable: server, environment: ToolLocator.environment(), currentDirectory: root)
             lsp = client
             lspStatus = "rust-analyzer: starting…"
-            let initialized = try await client.request("initialize", params: Self.initializeParams(root: root))
+            let initialized = try await client.request("initialize", params: Self.initializeParams(root: root, settings: serverSettings))
             guard lsp === client else { return }  // folder changed while initializing
             semanticLegend = SemanticTokenLegend(initializeResult: initialized)
             try client.notify("initialized", params: [:])
@@ -1544,7 +1629,7 @@ final class Workspace {
 
     func pushSettings() {
         guard lspReady else { return }
-        try? lsp?.notify("workspace/didChangeConfiguration", params: ["settings": RustAnalyzerSettings.current])
+        try? lsp?.notify("workspace/didChangeConfiguration", params: ["settings": serverSettings])
     }
 
     private func stopLanguageServer() async {
@@ -1614,7 +1699,7 @@ final class Workspace {
         ])
     }
 
-    private static func initializeParams(root: URL) -> JSONValue {
+    private static func initializeParams(root: URL, settings: JSONValue) -> JSONValue {
         let textDocument: JSONValue = [
             "synchronization": ["didSave": true, "dynamicRegistration": false],
             "publishDiagnostics": ["relatedInformation": false],
@@ -1666,7 +1751,7 @@ final class Workspace {
             "processId": .int(Int(ProcessInfo.processInfo.processIdentifier)),
             "clientInfo": ["name": "RustIDE", "version": "0.1.0"],
             "rootUri": .string(root.absoluteString),
-            "initializationOptions": RustAnalyzerSettings.current,
+            "initializationOptions": settings,
             "workspaceFolders": [["uri": .string(root.absoluteString), "name": .string(root.lastPathComponent)]],
             "capabilities": [
                 "textDocument": textDocument,
@@ -1727,6 +1812,8 @@ final class Workspace {
             arguments += ["--", path, "--exact"]
             testRunTitle = path
         }
+        let separator = arguments.firstIndex(of: "--") ?? arguments.endIndex
+        arguments.insert(contentsOf: featureArguments(packages: Self.selectedPackages(in: arguments)), at: separator)
         lastTestScope = scope
         testReport = CargoTestReport()
         selectedTestID = nil
@@ -1956,6 +2043,7 @@ final class Workspace {
     func debug(test name: String, in file: URL) {
         var build = ["test", "--no-run"]
         if let metadata = cargoMetadata { build += RustTestFinder.targetArguments(forFile: Self.key(for: file), in: metadata) }
+        build += featureArguments(packages: Self.selectedPackages(in: build))
         launchDebugger(title: name, build: build, pick: { $0.last { $0.isTest } },
                        arguments: [name, "--exact", "--nocapture", "--test-threads=1"], environment: [:])
     }

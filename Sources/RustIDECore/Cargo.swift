@@ -24,11 +24,93 @@ public struct CargoTarget: Codable, Sendable, Hashable {
     public var isRunnable: Bool { kind == .bin || kind == .example }
 }
 
+/// A dependency as declared in a manifest (`cargo metadata` → packages[].dependencies[]).
+public struct CargoDependency: Sendable, Hashable, Identifiable {
+    public enum Kind: String, Sendable, CaseIterable {
+        case normal, dev, build
+
+        public var title: String {
+            switch self {
+            case .normal: "Dependencies"
+            case .dev: "Dev Dependencies"
+            case .build: "Build Dependencies"
+            }
+        }
+
+        /// `cargo add` / `cargo remove` flag.
+        public var flag: String? {
+            switch self {
+            case .normal: nil
+            case .dev: "--dev"
+            case .build: "--build"
+            }
+        }
+    }
+
+    public enum Source: Sendable, Hashable {
+        case registry, path(String), git(String)
+    }
+
+    /// Crate name (the package name, not the `rename`).
+    public var name: String
+    /// Name used in code when renamed (`foo = { package = "bar" }`).
+    public var rename: String?
+    public var req: String
+    public var kind: Kind
+    public var optional: Bool
+    /// `cfg(...)` or triple for target-specific dependencies.
+    public var target: String?
+    public var source: Source
+    public var features: [String]
+
+    public var id: String { "\(kind.rawValue)|\(target ?? "")|\(rename ?? name)" }
+    public var isRegistry: Bool { source == .registry }
+
+    public init(name: String, rename: String? = nil, req: String, kind: Kind = .normal, optional: Bool = false,
+                target: String? = nil, source: Source = .registry, features: [String] = []) {
+        self.name = name
+        self.rename = rename
+        self.req = req
+        self.kind = kind
+        self.optional = optional
+        self.target = target
+        self.source = source
+        self.features = features
+    }
+
+    init?(json: JSONValue) {
+        guard let name = json["name"]?.stringValue else { return nil }
+        let sourceString = json["source"]?.stringValue
+        let source: Source = if let path = json["path"]?.stringValue {
+            .path(path)
+        } else if let sourceString, sourceString.hasPrefix("git+") {
+            .git(String(sourceString.dropFirst(4)))
+        } else {
+            .registry
+        }
+        self.init(name: name, rename: json["rename"]?.stringValue, req: json["req"]?.stringValue ?? "*",
+                  kind: Kind(rawValue: json["kind"]?.stringValue ?? "normal") ?? .normal,
+                  optional: json["optional"]?.boolValue ?? false, target: json["target"]?.stringValue,
+                  source: source, features: json["features"]?.arrayValue?.compactMap(\.stringValue) ?? [])
+    }
+}
+
 public struct CargoPackage: Sendable, Hashable {
     public var name: String
     public var manifestPath: String
+    /// Feature names, without `default`.
     public var features: [String]
     public var targets: [CargoTarget]
+    public var dependencies: [CargoDependency] = []
+    /// What `default` turns on.
+    public var defaultFeatures: [String] = []
+    /// feature → what it enables (`dep:foo`, `other`, `foo/bar`).
+    public var featureMap: [String: [String]] = [:]
+
+    public var directory: String { (manifestPath as NSString).deletingLastPathComponent }
+
+    /// `-p name/feature` style key used for workspace-wide feature selection.
+    public func featureKey(_ feature: String) -> String { "\(name)/\(feature)" }
 }
 
 /// The parts of `cargo metadata --no-deps --format-version 1` RustIDE uses.
@@ -62,9 +144,12 @@ public struct CargoMetadata: Sendable, Hashable {
                 return CargoTarget(package: name, name: targetName, kind: kind, srcPath: src,
                                    requiredFeatures: target["required-features"]?.arrayValue?.compactMap(\.stringValue) ?? [])
             }
-            let features = package["features"]?.objectValue.map { $0.keys.filter { $0 != "default" }.sorted() } ?? []
+            let featureMap = (package["features"]?.objectValue ?? [:])
+                .mapValues { $0.arrayValue?.compactMap(\.stringValue) ?? [] }
             return CargoPackage(name: name, manifestPath: package["manifest_path"]?.stringValue ?? "",
-                                features: features, targets: targets)
+                                features: featureMap.keys.filter { $0 != "default" }.sorted(), targets: targets,
+                                dependencies: (package["dependencies"]?.arrayValue ?? []).compactMap(CargoDependency.init(json:)),
+                                defaultFeatures: featureMap["default"] ?? [], featureMap: featureMap)
         }
         return CargoMetadata(workspaceRoot: root,
                              targetDirectory: json["target_directory"]?.stringValue ?? root + "/target",
@@ -87,6 +172,47 @@ public struct CargoMetadata: Sendable, Hashable {
         let data = out.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return process.terminationStatus == 0 ? parse(data) : nil
+    }
+}
+
+/// Resolved versions from `Cargo.lock` (`[[package]]` tables: name + version).
+public enum CargoLock {
+    /// Crate name → locked versions (several when semver-incompatible versions coexist).
+    public static func versions(in text: String) -> [String: [String]] {
+        var result: [String: [String]] = [:]
+        var name: String?
+        var version: String?
+        func flush() {
+            if let name, let version { result[name, default: []].append(version) }
+            name = nil
+            version = nil
+        }
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                flush()
+            } else if let value = stringValue(line, key: "name") {
+                name = value
+            } else if let value = stringValue(line, key: "version") {
+                version = value
+            }
+        }
+        flush()
+        return result
+    }
+
+    /// `key = "value"` → value.
+    private static func stringValue(_ line: String, key: String) -> String? {
+        guard line.hasPrefix(key) else { return nil }
+        let rest = line.dropFirst(key.count).drop { $0 == " " }
+        guard rest.first == "=" else { return nil }
+        let value = rest.dropFirst().trimmingCharacters(in: .whitespaces)
+        guard value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") else { return nil }
+        return String(value.dropFirst().dropLast())
+    }
+
+    public static func load(workspaceRoot: String) -> [String: [String]] {
+        (try? String(contentsOfFile: workspaceRoot + "/Cargo.lock", encoding: .utf8)).map(versions(in:)) ?? [:]
     }
 }
 

@@ -125,6 +125,7 @@ struct Sidebar: View {
                 Image(systemName: "magnifyingglass").help("Find in Project (⇧⌘F)").tag(SidebarMode.search)
                 Image(systemName: "list.bullet.indent").help("Outline").tag(SidebarMode.outline)
                 Image(systemName: "arrow.triangle.branch").help("Source Control (⌃⇧G)").tag(SidebarMode.git)
+                Image(systemName: "shippingbox").help("Cargo: dependencies and features").tag(SidebarMode.cargo)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -135,6 +136,7 @@ struct Sidebar: View {
             case .search: SearchView()
             case .outline: OutlineView()
             case .git: SourceControlView()
+            case .cargo: CargoView()
             }
         }
     }

@@ -9,12 +9,14 @@ public enum RustAnalyzerSettings {
 
     public static let `default` = make()
 
-    /// The settings with the user's choices from UserDefaults.
-    public static var current: JSONValue {
-        make(checkCommand: UserDefaults.standard.string(forKey: checkCommandKey) ?? "check")
+    /// The settings with the user's choices from UserDefaults, plus a project's enabled features.
+    public static func current(features: [String] = []) -> JSONValue {
+        make(checkCommand: UserDefaults.standard.string(forKey: checkCommandKey) ?? "check", features: features)
     }
 
-    public static func make(checkCommand: String = "check") -> JSONValue {
+    /// `features`: `package/feature` keys passed to cargo (`cargo.features`) when rust-analyzer
+    /// loads the workspace and runs check, so `#[cfg(feature = …)]` code is analyzed.
+    public static func make(checkCommand: String = "check", features: [String] = []) -> JSONValue {
         [
             "inlayHints": [
                 "typeHints": ["enable": true],
@@ -26,7 +28,7 @@ public enum RustAnalyzerSettings {
             "completion": ["callable": ["snippets": "fill_arguments"]],  // calls get parameter placeholders
             // `cargo check` or `cargo clippy` on save; --all-targets so tests and examples are checked too.
             "check": ["command": .string(checkCommands.contains(checkCommand) ? checkCommand : "check"), "allTargets": true],
-            "cargo": ["buildScripts": ["enable": true]],
+            "cargo": ["buildScripts": ["enable": true], "features": .array(features.map { .string($0) })],
             "procMacro": ["enable": true],
             "semanticHighlighting": ["strings": ["enable": false]],  // the lexer colors strings
         ]

@@ -657,3 +657,78 @@ struct RustAnalyzerFixture {
         await workspace.shutdown()
     }
 }
+
+@MainActor
+@Suite struct WorkspaceDependencyTests {
+    @Test func featureArgumentsFollowTheSelectedPackages() {
+        #expect(Workspace.selectedPackages(in: ["test", "-p", "a", "--lib"]) == ["a"])
+        #expect(Workspace.selectedPackages(in: ["check", "--workspace"]) == nil)
+        let workspace = Workspace()
+        workspace.enabledFeatures = ["a/x", "b/y"]
+        #expect(workspace.featureArguments() == ["--features", "a/x,b/y"])
+        #expect(workspace.featureArguments(packages: ["b"]) == ["--features", "b/y"])
+        #expect(workspace.featureArguments(packages: ["c"]) == [])
+    }
+
+    @Test(.enabled(if: RustIDECore.ToolLocator.find("cargo") != nil), .timeLimit(.minutes(3)))
+    func enabledFeaturesReachCargoTest() async throws {
+        let fixture = try RustAnalyzerFixture([
+            "Cargo.toml": "[package]\nname = \"feat\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\nfast = []\n",
+            "src/lib.rs": """
+                #[test]
+                fn always() {}
+
+                #[cfg(feature = "fast")]
+                #[test]
+                fn fast_only() {}
+
+                """,
+        ])
+        defer { fixture.remove() }
+        let workspace = Workspace()
+        await workspace.openFolder(fixture.dir)
+        let package = try #require(workspace.cargoMetadata?.packages.first)
+        #expect(package.features == ["fast"])
+
+        func testNames() async throws -> Set<String> {
+            workspace.runTests(.all)
+            for _ in 0..<1500 where workspace.isRunning { try await Task.sleep(for: .milliseconds(100)) }
+            return Set(workspace.testReport.tests.map(\.name))
+        }
+        #expect(try await testNames() == ["always"])
+        workspace.setFeature("fast", in: package, enabled: true)
+        #expect(workspace.isFeatureEnabled("fast", in: package))
+        #expect(try await testNames() == ["always", "fast_only"], "\(workspace.output)")
+        #expect(workspace.output.hasPrefix("$ cargo test --workspace --features feat/fast"), "\(workspace.output)")
+        workspace.enabledFeatures = []
+        await workspace.shutdown()
+    }
+
+    @Test(.enabled(if: RustIDECore.ToolLocator.find("cargo") != nil), .timeLimit(.minutes(3)))
+    func addsAndRemovesAPathDependency() async throws {
+        let fixture = try RustAnalyzerFixture([
+            "src/main.rs": "fn main() {}\n",
+            "helper/Cargo.toml": "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            "helper/src/lib.rs": "",
+        ])
+        defer { fixture.remove() }
+        let workspace = Workspace()
+        await workspace.openFolder(fixture.dir)
+        let package = try #require(workspace.cargoMetadata?.packages.first)
+
+        func waitForDependencies(_ predicate: ([CargoDependency]) -> Bool) async throws {
+            for _ in 0..<1500 where workspace.isRunning { try await Task.sleep(for: .milliseconds(100)) }
+            await workspace.refreshCargoMetadata()  // the watcher would do this too; don't depend on FSEvents timing
+            #expect(predicate(workspace.cargoMetadata?.packages.first?.dependencies ?? []), "\(workspace.output)")
+        }
+        workspace.addDependency("--path helper", kind: .dev, to: package)
+        try await waitForDependencies { $0.contains { $0.name == "helper" && $0.kind == .dev } }
+        #expect(workspace.output.hasPrefix("$ cargo add --path helper --dev -p fixture"), "\(workspace.output)")
+        #expect(workspace.lockedVersions["helper"] == ["0.1.0"])
+
+        let added = try #require(workspace.cargoMetadata?.packages.first?.dependencies.first { $0.name == "helper" })
+        workspace.removeDependency(added, from: package)
+        try await waitForDependencies { !$0.contains { $0.name == "helper" } }
+        await workspace.shutdown()
+    }
+}

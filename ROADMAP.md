@@ -33,7 +33,7 @@ language-specific layer.
 |---|---|---|---|
 | 2.1 | ✅ Clippy & fmt | Settings ▸ Check on save (cargo check / clippy) and Cargo ▸ Clippy on Save, pushed live via didChangeConfiguration; rustfmt on save respects `rustfmt.toml` | 0.3h |
 | 2.2 | ✅ Expand macro | Navigate ▸ Expand Macro (⌃⌥⌘M, also in the editor menu): `rust-analyzer/expandMacro` into a read-only, highlighted tab kept away from rust-analyzer. Function-like macros only: rust-analyzer 1.95 returns nothing for derives | 0.3h |
-| 2.3 | ⬜ Cargo.toml tools | Dependencies view from `cargo metadata`, `cargo update`, feature toggles | 0.6h |
+| 2.3 | ✅ Cargo.toml tools | Sidebar ▸ Cargo: per-package features (toggles go to rust-analyzer `cargo.features` and build / check / clippy / test as `--features pkg/feat`, saved per project) and dependencies by kind with Cargo.lock versions; add (`cargo add`), remove, update, docs.rs / crates.io | 0.6h |
 | 2.4 | ⬜ Runnables | rust-analyzer `experimental/runnables`: ▶ on `main`, tests, benches, doctests | 0.5h |
 | 2.5 | ⬜ Coverage | `cargo llvm-cov` if installed | 0.5h |
 
