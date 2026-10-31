@@ -50,6 +50,7 @@ enum Snapshot {
                     end = min(lineRange.location + column, end)  // 0-based column
                 }
                 textView.setSelectedRange(NSRange(location: end, length: 0))
+                textView.scrollRangeToVisible(NSRange(location: end, length: 0))
                 try? await Task.sleep(for: .milliseconds(900))  // let caret-driven requests land
             }
             if let text = value("--snapshot-type"),

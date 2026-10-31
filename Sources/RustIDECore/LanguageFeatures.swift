@@ -424,3 +424,56 @@ public struct MacroExpansion: Sendable, Hashable {
             + expansion + (expansion.hasSuffix("\n") ? "" : "\n")
     }
 }
+
+/// One entry of rust-analyzer's `experimental/runnables`: something cargo can run at a place in a file.
+public struct Runnable: Sendable, Hashable {
+    public enum Kind: String, Sendable {
+        case run, test, testModule = "test-mod", doctest, bench, other
+    }
+
+    /// "run hello", "test tests::adds", "test-mod tests", "doctest add", "bench parse".
+    public let label: String
+    public let kind: Kind
+    /// Zero-based line of the item's name (or its doc comment for doctests).
+    public let line: Int
+    public let cargoArgs: [String]
+    public let executableArgs: [String]
+    public let cwd: String?
+
+    public init(label: String, line: Int, cargoArgs: [String], executableArgs: [String] = [], cwd: String? = nil) {
+        self.label = label
+        let prefix = label.split(separator: " ").first.map(String.init) ?? ""
+        kind = Kind(rawValue: prefix) ?? .other
+        self.line = line
+        self.cargoArgs = cargoArgs
+        self.executableArgs = executableArgs
+        self.cwd = cwd
+    }
+
+    /// Runnables with a location in a file (workspace-level "cargo check -p …" entries are dropped).
+    public static func parseAll(_ json: JSONValue) -> [Runnable] {
+        (json.arrayValue ?? []).compactMap { item in
+            guard item["kind"]?.stringValue == "cargo", let label = item["label"]?.stringValue,
+                  let location = item["location"],
+                  let start = TextPosition(json: location["targetSelectionRange"]?["start"] ?? location["targetRange"]?["start"]),
+                  let cargoArgs = item["args"]?["cargoArgs"]?.arrayValue?.compactMap(\.stringValue), !cargoArgs.isEmpty
+            else { return nil }
+            return Runnable(label: label, line: start.line, cargoArgs: cargoArgs,
+                            executableArgs: item["args"]?["executableArgs"]?.arrayValue?.compactMap(\.stringValue) ?? [],
+                            cwd: item["args"]?["cwd"]?.stringValue)
+        }
+    }
+
+    /// Runs through the Tests panel (libtest output) rather than plain Output.
+    public var isTest: Bool { kind == .test || kind == .testModule || kind == .doctest }
+
+    /// `cargo …` arguments, with `extra` (e.g. `--features`) before `--` and the executable's arguments.
+    public func commandLine(extra: [String] = []) -> [String] {
+        cargoArgs + extra + (executableArgs.isEmpty ? [] : ["--"] + executableArgs)
+    }
+
+    /// Text after the kind: "tests::adds", "hello".
+    public var subject: String {
+        label.split(separator: " ", maxSplits: 1).dropFirst().first.map(String.init) ?? label
+    }
+}

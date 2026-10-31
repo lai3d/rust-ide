@@ -22,6 +22,8 @@ struct EditorServices {
     var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
     var performAction: @MainActor (CodeAction) -> Void
     var runTest: @MainActor (String) -> Void
+    var runnables: @MainActor () async -> [Runnable]
+    var run: @MainActor (Runnable) -> Void
     var toggleBreakpoint: @MainActor (Int) -> Void
     var editBreakpointCondition: @MainActor (Int) -> Void
     /// Debugger value of an expression (nil unless paused).
@@ -111,6 +113,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         let ruler = LineNumberRulerView(textView: textView)
         ruler.onRunTest = { [weak coordinator] name in coordinator?.parent.services.runTest(name) }
+        ruler.onRun = { [weak coordinator] runnable in coordinator?.parent.services.run(runnable) }
         ruler.onToggleBreakpoint = { [weak coordinator] line in coordinator?.parent.services.toggleBreakpoint(line) }
         ruler.onToggleFold = { [weak coordinator] line in coordinator?.toggleFold(line: line) }
         ruler.onEditCondition = { [weak coordinator] line in coordinator?.parent.services.editBreakpointCondition(line) }
@@ -500,8 +503,13 @@ struct CodeEditorView: NSViewRepresentable {
                 async let hints = self.parent.showInlayHints ? self.parent.services.inlayHints() : []
                 async let tokens = self.parent.services.semanticTokens()
                 async let regions = self.parent.services.foldingRanges()
-                let (newHints, newTokens, newRegions) = await (hints, tokens, regions)
+                async let runnables = self.parent.services.runnables()
+                let (newHints, newTokens, newRegions, newRunnables) = await (hints, tokens, regions, runnables)
                 guard !Task.isCancelled, textView.string == text else { return }  // edited meanwhile
+                if newRunnables != self.runnables {
+                    self.runnables = newRunnables
+                    self.updateTestMarkers(force: true)
+                }
                 let index = LineIndex(text)
                 self.placedHints = newHints.map {
                     PlacedHint(offset: index.offset(of: $0.position), label: $0.label,
@@ -1173,8 +1181,11 @@ struct CodeEditorView: NSViewRepresentable {
         // MARK: Test markers
 
         private var testMarkerKey = ""
+        /// rust-analyzer runnables for this buffer (refreshed with inlay hints).
+        var runnables: [Runnable] = []
 
-        /// ▶ / ✓ / ✗ next to #[test] functions.
+        /// ▶ / ✓ / ✗ next to #[test] functions (found locally, so they appear at once and track
+        /// results), plus rust-analyzer's other runnables: main, test modules, doctests, benches.
         func updateTestMarkers(force: Bool = false) {
             guard let textView, let ruler else { return }
             guard let prefix = parent.testPathPrefix else {
@@ -1187,8 +1198,12 @@ struct CodeEditorView: NSViewRepresentable {
             let key = tests.map { "\($0.name)@\($0.line):\(String(describing: parent.testStatuses[$0.name]))" }.joined(separator: ",")
             guard force || key != testMarkerKey else { return }
             testMarkerKey = key
-            ruler.testMarkers = Dictionary(tests.map { ($0.line, LineNumberRulerView.TestMarker(
+            var markers = Dictionary(tests.map { ($0.line, LineNumberRulerView.TestMarker(
                 name: $0.name, status: parent.testStatuses[$0.name])) }, uniquingKeysWith: { a, _ in a })
+            for runnable in runnables where runnable.kind != .test && markers[runnable.line] == nil {
+                markers[runnable.line] = LineNumberRulerView.TestMarker(name: runnable.label, status: nil, runnable: runnable)
+            }
+            ruler.testMarkers = markers
         }
 
         // MARK: Definition & misc

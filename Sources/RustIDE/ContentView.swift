@@ -351,6 +351,8 @@ struct DocumentEditor: View {
                 codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
                 performAction: { action in Task { await workspace.perform(action) } },
                 runTest: { name in workspace.runTests(.test(name, in: document.url)) },
+                runnables: { await workspace.runnables(in: document) },
+                run: { workspace.run($0) },
                 toggleBreakpoint: { line in workspace.toggleBreakpoint(in: document, line: line) },
                 editBreakpointCondition: { line in workspace.editBreakpointCondition(in: document, line: line) },
                 evaluate: { await workspace.evaluate($0) },

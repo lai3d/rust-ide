@@ -53,6 +53,8 @@ enum TestScope: Equatable {
     case package(URL)
     /// One test by full module path (`tests::adds`), in the target containing this file.
     case test(String, in: URL)
+    /// A rust-analyzer runnable (test module, doctest…) with its own cargo arguments.
+    case runnable(Runnable)
 }
 
 enum SidebarMode: Hashable {
@@ -433,6 +435,26 @@ final class Workspace {
         }
     }
 
+    // MARK: - Runnables (gutter ▶ from rust-analyzer)
+
+    /// `experimental/runnables` for a file: main functions, tests, test modules, doctests, benches.
+    func runnables(in document: Document) async -> [Runnable] {
+        guard lspReady, document.usesLanguageServer, let lsp else { return [] }
+        let result = try? await lsp.request("experimental/runnables", params: [
+            "textDocument": ["uri": .string(document.url.absoluteString)],
+        ])
+        return result.map(Runnable.parseAll) ?? []
+    }
+
+    /// Runs a runnable: tests go to the Tests panel, the rest (`cargo run`, `cargo bench`) to Output.
+    func run(_ runnable: Runnable) {
+        if runnable.isTest {
+            runTests(.runnable(runnable))
+        } else {
+            runCargo(runnable.commandLine(extra: featureArguments(packages: Self.selectedPackages(in: runnable.cargoArgs))))
+        }
+    }
+
     // MARK: - Dependencies & features (Cargo sidebar)
 
     /// Crate name → versions in Cargo.lock.
@@ -477,7 +499,7 @@ final class Workspace {
 
     /// Package names after `-p` flags in `arguments` (nil if none: the whole workspace).
     static func selectedPackages(in arguments: [String]) -> [String]? {
-        let names = zip(arguments, arguments.dropFirst()).filter { $0.0 == "-p" }.map(\.1)
+        let names = zip(arguments, arguments.dropFirst()).filter { $0.0 == "-p" || $0.0 == "--package" }.map(\.1)
         return names.isEmpty ? nil : names
     }
 
@@ -1811,6 +1833,9 @@ final class Workspace {
             }
             arguments += ["--", path, "--exact"]
             testRunTitle = path
+        case .runnable(let runnable):
+            arguments = runnable.commandLine()
+            testRunTitle = runnable.label
         }
         let separator = arguments.firstIndex(of: "--") ?? arguments.endIndex
         arguments.insert(contentsOf: featureArguments(packages: Self.selectedPackages(in: arguments)), at: separator)

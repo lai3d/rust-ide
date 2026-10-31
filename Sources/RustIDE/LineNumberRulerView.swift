@@ -16,6 +16,8 @@ final class LineNumberRulerView: NSView {
     struct TestMarker: Equatable {
         let name: String
         let status: TestResult.Status?
+        /// Set for rust-analyzer runnables (main, test module, doctest, bench) rather than a #[test].
+        var runnable: Runnable?
     }
 
     /// Test functions per zero-based line: click to run.
@@ -23,6 +25,7 @@ final class LineNumberRulerView: NSView {
         didSet { if testMarkers != oldValue { needsDisplay = true } }
     }
     var onRunTest: ((String) -> Void)?
+    var onRun: ((Runnable) -> Void)?
     var onToggleBreakpoint: ((Int) -> Void)?
     var onToggleFold: ((Int) -> Void)?
     var onEditCondition: ((Int) -> Void)?
@@ -88,7 +91,7 @@ final class LineNumberRulerView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard let line = line(at: point) else { return super.mouseDown(with: event) }
         if let test = testMarkers[line], point.x < 17 {
-            onRunTest?(test.name)
+            if let runnable = test.runnable { onRun?(runnable) } else { onRunTest?(test.name) }
         } else if foldMarkers[line] != nil, point.x > bounds.maxX - 18 {
             onToggleFold?(line)
         } else {
@@ -203,7 +206,7 @@ final class LineNumberRulerView: NSView {
                 case .passed?: ("checkmark.circle.fill", .systemGreen)
                 case .failed?: ("xmark.circle.fill", .systemRed)
                 case .running?: ("clock.fill", .secondaryLabelColor)
-                default: ("play.fill", .systemGreen)
+                default: (test.runnable?.kind == .testModule ? "forward.fill" : "play.fill", .systemGreen)
                 }
                 // Circle symbols: white glyph on a colored disc; play: just colored.
                 let palette: [NSColor] = symbol.hasSuffix("circle.fill") ? [.white, color] : [color]

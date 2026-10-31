@@ -732,3 +732,65 @@ struct RustAnalyzerFixture {
         await workspace.shutdown()
     }
 }
+
+@MainActor
+@Suite struct WorkspaceRunnableTests {
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(3)))
+    func runsTestModulesDoctestsAndMain() async throws {
+        let lib = """
+            /// ```
+            /// assert_eq!(fixture::one(), 1);
+            /// ```
+            pub fn one() -> i32 { 1 }
+
+            #[cfg(test)]
+            mod tests {
+                #[test]
+                fn a() {}
+                #[test]
+                fn b() {}
+            }
+
+            """
+        let fixture = try RustAnalyzerFixture([
+            "src/lib.rs": lib,
+            "src/bin/hello.rs": "fn main() {\n    println!(\"hello from runnable\");\n}\n",
+        ])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
+        let document = try #require(workspace.openFile(fixture.url("src/lib.rs")))
+        var runnables: [Runnable] = []
+        for _ in 0..<100 {  // the file was just opened; rust-analyzer may need a moment
+            runnables = await workspace.runnables(in: document)
+            if runnables.contains(where: { $0.kind == .doctest }) { break }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+
+        func waitForRun() async throws {
+            for _ in 0..<1500 where workspace.isRunning { try await Task.sleep(for: .milliseconds(100)) }
+        }
+        let module = try #require(runnables.first { $0.kind == .testModule }, "\(runnables)")
+        workspace.run(module)
+        try await waitForRun()
+        #expect(workspace.bottomTab == .tests)
+        #expect(Set(workspace.testReport.tests.map(\.name)) == ["tests::a", "tests::b"], "\(workspace.output)")
+
+        let doctest = try #require(runnables.first { $0.kind == .doctest }, "\(runnables)")
+        workspace.run(doctest)
+        try await waitForRun()
+        #expect(workspace.testReport.passed == 1 && workspace.testReport.tests.first?.name.contains("one") == true,
+                "\(workspace.output)")
+
+        let bin = try #require(workspace.openFile(fixture.url("src/bin/hello.rs")))
+        var mainRunnable: Runnable?
+        for _ in 0..<100 where mainRunnable == nil {
+            mainRunnable = await workspace.runnables(in: bin).first { $0.kind == .run }
+            if mainRunnable == nil { try await Task.sleep(for: .milliseconds(200)) }
+        }
+        workspace.run(try #require(mainRunnable))
+        try await waitForRun()
+        #expect(workspace.bottomTab == .output)
+        #expect(workspace.output.contains("hello from runnable"), "\(workspace.output)")
+        await workspace.shutdown()
+    }
+}
