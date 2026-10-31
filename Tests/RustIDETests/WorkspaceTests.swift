@@ -227,7 +227,13 @@ import RustIDECore
         let document = try #require(workspace.activeDocument)
 
         // rust-analyzer assists come without an edit; perform() resolves them first.
-        let actions = await workspace.codeActions(in: document, at: (main as NSString).range(of: "answer").location + 2)
+        // On a cold CI start the assists can lag the quiescent status: re-ask briefly.
+        let offset = (main as NSString).range(of: "answer").location + 2
+        var actions = await workspace.codeActions(in: document, at: offset)
+        for _ in 0..<20 where !actions.contains(where: { $0.title.localizedCaseInsensitiveContains("explicit type") }) {
+            try await Task.sleep(for: .milliseconds(500))
+            actions = await workspace.codeActions(in: document, at: offset)
+        }
         let explicit = try #require(actions.first { $0.title.localizedCaseInsensitiveContains("explicit type") },
                                     "\(actions.map(\.title))")
         await workspace.perform(explicit)
