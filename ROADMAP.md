@@ -25,7 +25,7 @@ language-specific layer.
 | 1.5 | ✅ Debugger (lldb-dap) | DAP over stdio to `xcrun lldb-dap`; builds with `--message-format=json-render-diagnostics` and debugs the artifact (run configurations or one `#[test]`); rustc's LLDB formatters for Vec / String / Option; verified on CI (needs macOS developer mode) | 1–1.5h |
 | 1.6 | ✅ Run configurations | Bins / examples from `cargo metadata` (refreshed when Cargo.toml changes), args, env, features, release profile | 0.5h |
 | 1.7 | ✅ Snippets & settings | 18 Rust snippets that complement rust-analyzer's own; space indentation (Tab, Return, ⌘] / ⌘[, electric `}`) at the tab-width setting; cargo / rust-analyzer / lldb-dap path overrides | 0.4h |
-| 1.8 | ✅ CI & release | ✅ CI installs rustup + rust-analyzer and enables debugging; ✅ release workflow (`v*` tag → RustIDE.zip); ✅ app icon; ✅ folder-argument window fix; ⬜ first tag, IDE Toolbox catalog entry | 0.5h |
+| 1.8 | 🚧 CI & release | ✅ CI installs rustup + rust-analyzer and enables debugging; ✅ release workflow (`v*` tag → RustIDE.zip); ✅ app icon; ✅ folder-argument window fix; ✅ v0.1.0 released; ⬜ IDE Toolbox catalog entry (branch ready) | 0.5h |
 
 ## Phase 2 — Rust-specific features
 
