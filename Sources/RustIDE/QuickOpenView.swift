@@ -114,7 +114,7 @@ struct OutlineView: View {
     var body: some View {
         Group {
             if workspace.outline.isEmpty {
-                Text(workspace.isRustFile ? "No symbols" : "Open a Go file to see its outline.")
+                Text(workspace.isRustFile ? "No symbols" : "Open a Rust file to see its outline.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

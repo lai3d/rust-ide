@@ -187,6 +187,12 @@ struct RustIDECommands: Commands {
                 }
                 .keyboardShortcut("h", modifiers: [.control, .option])
                 .disabled(!workspace.isRustFile)
+                Button("Expand Macro") {
+                    guard let document = workspace.activeDocument else { return }
+                    Task { await workspace.expandMacro(in: document, at: document.caretOffset) }
+                }
+                .keyboardShortcut("m", modifiers: [.control, .option, .command])
+                .disabled(!workspace.isRustFile)
                 Button("Go Back") { workspace.goBack() }
                     .keyboardShortcut(.leftArrow, modifiers: [.control, .command])
                     .disabled(!workspace.canGoBack)

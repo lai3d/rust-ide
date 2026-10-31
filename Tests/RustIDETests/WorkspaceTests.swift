@@ -631,3 +631,29 @@ struct RustAnalyzerFixture {
         await workspace.shutdown()
     }
 }
+
+@MainActor
+@Suite struct WorkspaceMacroExpansionTests {
+    @Test(.enabled(if: RustAnalyzerFixture.available), .timeLimit(.minutes(2)))
+    func expandsTheMacroAtTheCaretIntoAReadOnlyTab() async throws {
+        let main = "fn main() {\n    let v = vec![1, 2];\n    println!(\"{:?}\", v);\n}\n"
+        let fixture = try RustAnalyzerFixture(["src/main.rs": main])
+        defer { fixture.remove() }
+        let workspace = try await fixture.openWorkspace()
+        let document = try #require(workspace.activeDocument)
+        await workspace.expandMacro(in: document, at: (main as NSString).range(of: "vec!").location + 1)
+        let tab = try #require(workspace.activeDocument)
+        #expect(tab !== document)
+        #expect(tab.name == "vec! expansion.rs")
+        #expect(tab.isReadOnly && tab.isRust && !tab.usesLanguageServer)
+        #expect(tab.text.hasPrefix("// Recursive expansion of vec! macro"), "\(tab.text)")
+        #expect(tab.text.contains("into_vec"), "\(tab.text)")
+
+        // No macro at the caret: no new tab.
+        workspace.activate(document)
+        await workspace.expandMacro(in: document, at: 2)
+        #expect(workspace.activeDocument === document)
+        #expect(workspace.documents.count == 2)
+        await workspace.shutdown()
+    }
+}

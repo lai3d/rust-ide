@@ -114,6 +114,16 @@ final class Document: Identifiable {
 
     var name: String { url.lastPathComponent }
     var isRust: Bool { url.pathExtension == "rs" }
+    /// Rust files rust-analyzer knows about: not macro expansion tabs.
+    var usesLanguageServer: Bool { isRust && !Self.isExpansion(url) }
+
+    /// Folder for macro expansion tabs (read-only, highlighted, not sent to rust-analyzer).
+    nonisolated static let expansionDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("RustIDE-macro-expansions", isDirectory: true).canonicalFileURL
+
+    nonisolated static func isExpansion(_ url: URL) -> Bool {
+        url.canonicalFileURL.path.hasPrefix(expansionDirectory.path + "/")
+    }
 
     init(url: URL, text: String, isReadOnly: Bool) {
         self.url = url
@@ -711,7 +721,7 @@ final class Workspace {
             bottomTab = .output
             return nil
         }
-        let document = Document(url: url, text: contents, isReadOnly: isOutsideProject(url))
+        let document = Document(url: url, text: contents, isReadOnly: isOutsideProject(url) || Document.isExpansion(url))
         let insertIndex = activeDocument.flatMap { active in documents.firstIndex { $0 === active } }
             .map { $0 + 1 } ?? documents.count
         documents.insert(document, at: insertIndex)
@@ -810,7 +820,7 @@ final class Workspace {
 
     /// Formats with rust-analyzer (rustfmt, honoring rustfmt.toml).
     func format(_ document: Document) async {
-        guard lspReady, document.isRust, !document.isReadOnly, let lsp else { return }
+        guard lspReady, document.usesLanguageServer, !document.isReadOnly, let lsp else { return }
         let version = document.version
         guard let result = try? await lsp.request("textDocument/formatting", params: [
             "textDocument": ["uri": .string(document.url.absoluteString)],
@@ -852,7 +862,7 @@ final class Workspace {
             try document.text.write(to: document.url, atomically: true, encoding: .utf8)
             document.isDirty = false
             refreshGit()
-            if lspReady, document.isRust {
+            if lspReady, document.usesLanguageServer {
                 try? lsp?.notify("textDocument/didSave", params: [
                     "textDocument": ["uri": .string(document.url.absoluteString)],
                 ])
@@ -891,7 +901,7 @@ final class Workspace {
 
     /// Semantic tokens for the whole document (decoded with the server's legend).
     func semanticTokens(in document: Document) async -> [SemanticToken] {
-        guard lspReady, document.isRust, let lsp, let legend = semanticLegend,
+        guard lspReady, document.usesLanguageServer, let lsp, let legend = semanticLegend,
               let result = try? await lsp.request("textDocument/semanticTokens/full", params: [
                   "textDocument": ["uri": .string(document.url.absoluteString)],
               ])
@@ -900,7 +910,7 @@ final class Workspace {
     }
 
     func foldingRanges(in document: Document) async -> [FoldRegion] {
-        guard lspReady, document.isRust, let lsp,
+        guard lspReady, document.usesLanguageServer, let lsp,
               let result = try? await lsp.request("textDocument/foldingRange", params: [
                   "textDocument": ["uri": .string(document.url.absoluteString)],
               ])
@@ -910,7 +920,7 @@ final class Workspace {
 
     /// Inlay hints for the whole document.
     func inlayHints(in document: Document) async -> [InlayHint] {
-        guard lspReady, document.isRust, let lsp else { return [] }
+        guard lspReady, document.usesLanguageServer, let lsp else { return [] }
         let lines = LineIndex(document.text).lineCount
         guard let result = try? await lsp.request("textDocument/inlayHint", params: [
             "textDocument": ["uri": .string(document.url.absoluteString)],
@@ -943,6 +953,30 @@ final class Workspace {
     func jumpToTypeDefinition(from document: Document, at offset: Int) async {
         await jumpToLocations(method: "textDocument/typeDefinition", what: "type definition",
                               from: document, at: offset)
+    }
+
+    /// Navigate ▸ Expand Macro: the macro call at `offset`, expanded recursively, in a read-only tab.
+    func expandMacro(in document: Document, at offset: Int) async {
+        guard case let (lsp, params)? = positionRequest(document, at: offset) else { return }
+        guard let result = try? await lsp.request("rust-analyzer/expandMacro", params: params),
+              let expansion = MacroExpansion(json: result) else {
+            flashStatus("No macro at the cursor")
+            return
+        }
+        let url = Document.expansionDirectory.appendingPathComponent(expansion.fileName)
+        do {
+            try FileManager.default.createDirectory(at: Document.expansionDirectory, withIntermediateDirectories: true)
+            try expansion.documentText.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            flashStatus("Expand macro failed: \(error.localizedDescription)")
+            return
+        }
+        let key = Self.key(for: url)
+        if let existing = documents.first(where: { Self.key(for: $0.url) == key }) {
+            existing.text = expansion.documentText  // re-expanded: refresh the open tab
+            existing.version += 1
+        }
+        openFile(url)
     }
 
     private func jumpToLocations(method: String, what: String, from document: Document, at offset: Int) async {
@@ -1122,7 +1156,7 @@ final class Workspace {
 
     /// Re-reads the active document's symbols (debounced by the caller).
     func refreshOutline() async {
-        guard let document = activeDocument, document.isRust, lspReady, let lsp,
+        guard let document = activeDocument, document.usesLanguageServer, lspReady, let lsp,
               let result = try? await lsp.request("textDocument/documentSymbol", params: [
                   "textDocument": ["uri": .string(document.url.absoluteString)],
               ]),
@@ -1147,7 +1181,7 @@ final class Workspace {
 
     /// Quick fixes, refactorings and source actions at the caret (or selection).
     func codeActions(in document: Document, at offset: Int, length: Int = 0) async -> [CodeAction] {
-        guard lspReady, document.isRust, let lsp else { return [] }
+        guard lspReady, document.usesLanguageServer, let lsp else { return [] }
         let index = LineIndex(document.text)
         let caret = index.position(of: offset)
         let related = diagnostics(for: document).filter { $0.contains(caret) || $0.start.line == caret.line }
@@ -1432,7 +1466,7 @@ final class Workspace {
     }
 
     private func positionRequest(_ document: Document, at offset: Int) -> (LSPClient, JSONValue)? {
-        guard lspReady, document.isRust, let lsp else { return nil }
+        guard lspReady, document.usesLanguageServer, let lsp else { return nil }
         let position = LineIndex(document.text).position(of: offset)
         return (lsp, ["textDocument": ["uri": .string(document.url.absoluteString)], "position": position.json])
     }
@@ -1554,7 +1588,7 @@ final class Workspace {
     }
 
     private func sendDidOpen(_ document: Document) {
-        guard lspReady, document.isRust else { return }
+        guard lspReady, document.usesLanguageServer else { return }
         try? lsp?.notify("textDocument/didOpen", params: [
             "textDocument": [
                 "uri": .string(document.url.absoluteString),
@@ -1566,7 +1600,7 @@ final class Workspace {
     }
 
     private func sendDidChange(_ document: Document) {
-        guard lspReady, document.isRust else { return }
+        guard lspReady, document.usesLanguageServer else { return }
         try? lsp?.notify("textDocument/didChange", params: [
             "textDocument": ["uri": .string(document.url.absoluteString), "version": .int(document.version)],
             "contentChanges": [["text": .string(document.text)]],
@@ -1574,7 +1608,7 @@ final class Workspace {
     }
 
     private func sendDidClose(_ document: Document) {
-        guard lspReady, document.isRust else { return }
+        guard lspReady, document.usesLanguageServer else { return }
         try? lsp?.notify("textDocument/didClose", params: [
             "textDocument": ["uri": .string(document.url.absoluteString)],
         ])
@@ -1752,7 +1786,7 @@ final class Workspace {
 
     /// The full name (`tests::adds`) of the #[test] around the caret, if any.
     private func testAtCaret(in document: Document) -> String? {
-        guard document.isRust,
+        guard document.usesLanguageServer,
               let test = RustTestFinder.enclosingTest(in: document.text, at: document.caretOffset) else { return nil }
         return RustTestFinder.join(testModulePath(for: document), test.path)
     }
@@ -1884,7 +1918,7 @@ final class Workspace {
     }
 
     func toggleBreakpointAtCaret() {
-        guard let document = activeDocument, document.isRust else { return }
+        guard let document = activeDocument, document.usesLanguageServer else { return }
         toggleBreakpoint(in: document, line: LineIndex(document.text).position(of: document.caretOffset).line)
     }
 

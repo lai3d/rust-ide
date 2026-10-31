@@ -393,3 +393,34 @@ public struct FoldRegion: Sendable, Hashable {
         return inner.length > 0 ? inner : nil
     }
 }
+
+/// rust-analyzer's `rust-analyzer/expandMacro` result: the macro at a position, expanded recursively.
+public struct MacroExpansion: Sendable, Hashable {
+    public let name: String
+    public let expansion: String
+
+    public init(name: String, expansion: String) {
+        self.name = name
+        self.expansion = expansion
+    }
+
+    /// nil when there is no macro call at the position (the server answers null).
+    public init?(json: JSONValue) {
+        guard var name = json["name"]?.stringValue, let expansion = json["expansion"]?.stringValue else { return nil }
+        if name.hasSuffix("!") { name.removeLast() }  // "vec!" for function-like macros, "Debug" for derives
+        self.init(name: name, expansion: expansion)
+    }
+
+    /// Tab file name: `vec! expansion.rs` (path separators and odd characters replaced).
+    /// Derives and attribute macros get the same `!` suffix; it marks the tab as an expansion.
+    public var fileName: String {
+        let safe = name.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" }
+        return String(safe) + "! expansion.rs"
+    }
+
+    /// Contents of the read-only tab.
+    public var documentText: String {
+        "// Recursive expansion of \(name)! macro\n// " + String(repeating: "=", count: 40) + "\n\n"
+            + expansion + (expansion.hasSuffix("\n") ? "" : "\n")
+    }
+}

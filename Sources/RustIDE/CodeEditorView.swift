@@ -18,6 +18,7 @@ struct EditorServices {
     var implementation: @MainActor (Int) -> Void
     var typeDefinition: @MainActor (Int) -> Void
     var rename: @MainActor (Int) -> Void
+    var expandMacro: @MainActor (Int) -> Void
     var codeActions: @MainActor (_ offset: Int, _ length: Int) async -> [CodeAction]
     var performAction: @MainActor (CodeAction) -> Void
     var runTest: @MainActor (String) -> Void
@@ -1209,6 +1210,7 @@ struct CodeEditorView: NSViewRepresentable {
                 ActionMenuItem(title: "Find References") { [weak self] in self?.parent.services.references(offset) },
                 ActionMenuItem(title: "Call Hierarchy") { [weak self] in self?.parent.services.callHierarchy(offset) },
                 ActionMenuItem(title: "Rename Symbol…") { [weak self] in self?.parent.services.rename(offset) },
+                ActionMenuItem(title: "Expand Macro") { [weak self] in self?.parent.services.expandMacro(offset) },
                 ActionMenuItem(title: "Quick Fix…") { [weak self] in
                     DispatchQueue.main.async { self?.showQuickFixes() }  // after this menu closes
                 },
