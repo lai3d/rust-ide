@@ -1,7 +1,7 @@
 import RustIDECore
 import SwiftUI
 
-/// Results of the last `go test -json` run: test list on the left, selected output on the right.
+/// Results of the last `cargo test` run: test list on the left, selected output on the right.
 struct TestsPanel: View {
     @Environment(Workspace.self) private var workspace
 
@@ -42,13 +42,10 @@ struct TestsPanel: View {
                             TestRow(test: test)
                                 .tag(test.id)
                                 .contextMenu {
-                                    if let name = test.name {
-                                        Button("Go to Test") { workspace.revealTest(named: name) }
-                                    }
+                                    Button("Go to Test") { workspace.revealTest(named: test.name) }
+                                    Button("Run Again") { workspace.rerun(test) }
                                 }
-                                .onTapGesture(count: 2) {
-                                    if let name = test.name { workspace.revealTest(named: name) }
-                                }
+                                .onTapGesture(count: 2) { workspace.revealTest(named: test.name) }
                         }
                     }
                     .listStyle(.plain)
@@ -60,16 +57,18 @@ struct TestsPanel: View {
         }
     }
 
-    /// The selected test's output followed by its subtests' (where failures are usually logged).
-    private func combinedOutput(_ report: GoTestReport) -> String? {
+    /// The selected test's captured output (cargo only prints it for failures).
+    private func combinedOutput(_ report: CargoTestReport) -> String? {
         guard let selected = report.tests.first(where: { $0.id == workspace.selectedTestID }) else { return nil }
-        guard let name = selected.name else { return selected.output }
-        return report.tests
-            .filter { $0.package == selected.package && ($0.name == name || $0.name?.hasPrefix(name + "/") == true) }
-            .map(\.output).joined()
+        if !selected.output.isEmpty { return selected.output }
+        return switch selected.status {
+        case .passed: "Passed. (cargo test shows output only for failures; add -- --nocapture in a terminal to see more.)"
+        case .skipped: "Ignored."
+        default: ""
+        }
     }
 
-    private func summary(_ report: GoTestReport) -> some View {
+    private func summary(_ report: CargoTestReport) -> some View {
         HStack(spacing: 10) {
             Text(workspace.testRunTitle).fontWeight(.semibold).lineLimit(1)
             Spacer()
@@ -93,24 +92,21 @@ struct TestsPanel: View {
 }
 
 private struct TestRow: View {
-    let test: GoTestResult
+    let test: TestResult
 
     var body: some View {
         HStack(spacing: 6) {
             TestStatusIcon(status: test.status)
-            Text(test.shortName).lineLimit(1)
+            Text(test.name).lineLimit(1).truncationMode(.head)
             Spacer()
-            if let elapsed = test.elapsed {
-                Text(String(format: "%.2fs", elapsed)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
+            Text(test.suite).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
-        .padding(.leading, CGFloat(test.depth) * 14)
-        .help(test.package + " " + (test.name ?? ""))
+        .help(test.name + " — " + test.suite)
     }
 }
 
 struct TestStatusIcon: View {
-    let status: GoTestResult.Status
+    let status: TestResult.Status
 
     var body: some View {
         switch status {
@@ -122,7 +118,7 @@ struct TestStatusIcon: View {
     }
 }
 
-/// A test's output; `file.go:12` references are clickable.
+/// A test's output; `file.rs:12:5` references are clickable.
 private struct TestOutput: View {
     @Environment(Workspace.self) private var workspace
     let output: String?
@@ -155,7 +151,7 @@ private struct TestOutput: View {
             .buttonStyle(.plain)
         } else {
             Text(line.isEmpty ? " " : line)
-                .foregroundStyle(line.contains("--- FAIL") || line.hasPrefix("FAIL") ? .red : .primary)
+                .foregroundStyle(line.contains("panicked at") || line.hasPrefix("assertion") ? .red : .primary)
         }
     }
 }

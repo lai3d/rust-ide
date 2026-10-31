@@ -312,7 +312,7 @@ struct DocumentEditor: View {
         CodeEditorView(
             text: document.text,
             highlightRust: document.isRust,
-            isTestFile: document.name.hasSuffix("_test.go"),
+            testPathPrefix: document.isRust ? workspace.testModulePath(for: document) : nil,
             testStatuses: workspace.testStatuses,
             breakpoints: workspace.breakpointLines(for: document),
             conditionalBreakpoints: workspace.conditionalBreakpointLines(for: document),
@@ -347,7 +347,7 @@ struct DocumentEditor: View {
                 rename: { offset in Task { await workspace.promptRename(in: document, at: offset) } },
                 codeActions: { await workspace.codeActions(in: document, at: $0, length: $1) },
                 performAction: { action in Task { await workspace.perform(action) } },
-                runTest: { name in workspace.runTests(.test(name, in: document.url.deletingLastPathComponent())) },
+                runTest: { name in workspace.runTests(.test(name, in: document.url)) },
                 toggleBreakpoint: { line in workspace.toggleBreakpoint(in: document, line: line) },
                 editBreakpointCondition: { line in workspace.editBreakpointCondition(in: document, line: line) },
                 evaluate: { await workspace.evaluate($0) },

@@ -49,7 +49,9 @@ final class CallNode: Identifiable {
 
 enum TestScope: Equatable {
     case all
+    /// The Cargo package containing this file or folder.
     case package(URL)
+    /// One test by full module path (`tests::adds`), in the target containing this file.
     case test(String, in: URL)
 }
 
@@ -219,12 +221,13 @@ final class Workspace {
     private(set) var outline: [SymbolNode] = []
 
     // Tests
-    private(set) var testReport = GoTestReport()
+    private(set) var testReport = CargoTestReport()
     private(set) var testRunTitle = ""
+    @ObservationIgnored private var lastTestScope: TestScope?
     var selectedTestID: String?
-    /// Latest status per test name, for gutter markers.
-    var testStatuses: [String: GoTestResult.Status] {
-        Dictionary(testReport.tests.compactMap { t in t.name.map { ($0, t.status) } }, uniquingKeysWith: { $1 })
+    /// Latest status per test path (`tests::adds`), for gutter markers.
+    var testStatuses: [String: TestResult.Status] {
+        Dictionary(testReport.tests.map { ($0.name, $0.status) }, uniquingKeysWith: { $1 })
     }
 
     // Debugging
@@ -1625,8 +1628,7 @@ final class Workspace {
 
     // MARK: - Tests
 
-    /// Runs `go test -json` for a scope and streams results into `testReport`.
-    /// Coverage from the last "Test with Coverage" run.
+    /// Coverage from the last "Test with Coverage" run (cargo-llvm-cov; see ROADMAP 2.5).
     private(set) var coverage: CoverageReport?
     var showCoverage = true
 
@@ -1637,42 +1639,54 @@ final class Workspace {
     }
 
     func runTestsWithCoverage() {
-        runTests(.all, coverage: true)
+        output = "Test coverage needs cargo-llvm-cov support, which isn't wired up yet.\n"
+        bottomTab = .output
     }
 
-    func runTests(_ scope: TestScope, coverage measure: Bool = false) {
+    func clearCoverage() {
+        coverage = nil
+    }
+
+    /// Runs `cargo test` for a scope and streams libtest's results into `testReport`.
+    func runTests(_ scope: TestScope) {
         guard let rootURL, !isRunning else { return }
-        guard let go = ToolLocator.find("go") else {
-            output = "go not found. Install Go from https://go.dev/dl/\n"
+        guard let cargo = ToolLocator.find("cargo") else {
+            output = "cargo not found. Install Rust from https://rustup.rs\n"
             bottomTab = .output
             return
         }
         saveAll()
-        var arguments = ["test", "-json"]
-        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("goide-cover-\(UUID().uuidString).out")
-        if measure { arguments.append("-coverprofile=" + profile.path) }
+        var arguments = ["test"]
         switch scope {
         case .all:
-            arguments.append("./...")
+            arguments.append("--workspace")
             testRunTitle = "All tests"
-        case .package(let dir):
-            arguments.append(packagePattern(for: dir))
-            testRunTitle = "Package \(packagePattern(for: dir))"
-        case .test(let name, let dir):
-            arguments += ["-run", "^\(NSRegularExpression.escapedPattern(for: name))$", packagePattern(for: dir)]
-            testRunTitle = name
+        case .package(let url):
+            if let package = cargoMetadata?.package(containing: Self.key(for: url)) {
+                arguments += ["-p", package.name]
+                testRunTitle = "Package \(package.name)"
+            } else {
+                testRunTitle = "All tests"
+            }
+        case .test(let path, let file):
+            if let metadata = cargoMetadata {
+                arguments += RustTestFinder.targetArguments(forFile: Self.key(for: file), in: metadata)
+            }
+            arguments += ["--", path, "--exact"]
+            testRunTitle = path
         }
-        testReport = GoTestReport()
+        lastTestScope = scope
+        testReport = CargoTestReport()
         selectedTestID = nil
-        output = "$ go \(arguments.joined(separator: " "))\n"
+        output = "$ cargo \(arguments.joined(separator: " "))\n"
         bottomTab = .tests
         isRunning = true
 
         let process = Process()
-        process.executableURL = go
+        process.executableURL = cargo
         process.arguments = arguments
         process.currentDirectoryURL = rootURL
-        process.environment = ToolLocator.environment()
+        process.environment = ToolLocator.environment().merging(["CARGO_TERM_COLOR": "never"]) { $1 }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -1690,10 +1704,9 @@ final class Workspace {
                 try? await Task.sleep(for: .milliseconds(80))  // let the last lines land
                 self.isRunning = false
                 self.runProcess = nil
-                if measure { self.loadCoverage(profile) }
                 let r = self.testReport
-                self.appendOutput("\n[\(r.passed) passed, \(r.failed) failed, \(r.skipped) skipped — exit \(status)]\n")
-                if r.tests.isEmpty, !r.buildOutput.isEmpty { self.bottomTab = .output }  // build failed
+                self.appendOutput("\n[\(r.passed) passed, \(r.failed) failed, \(r.skipped) ignored — exit \(status)]\n")
+                if r.tests.isEmpty, status != 0 { self.bottomTab = .output }  // build failed
                 self.selectedTestID = self.selectedTestID ?? r.tests.first { $0.status == .failed }?.id
             }
         }
@@ -1702,69 +1715,79 @@ final class Workspace {
             runProcess = process
         } catch {
             isRunning = false
-            appendOutput("Failed to start go: \(error.localizedDescription)\n")
+            appendOutput("Failed to start cargo: \(error.localizedDescription)\n")
         }
-    }
-
-    private func loadCoverage(_ profile: URL) {
-        defer { try? FileManager.default.removeItem(at: profile) }
-        guard let rootURL, let text = try? String(contentsOf: profile, encoding: .utf8),
-              let goMod = try? String(contentsOf: rootURL.appendingPathComponent("go.mod"), encoding: .utf8),
-              let module = CoverageReport.modulePath(goMod: goMod)
-        else { return }
-        coverage = CoverageReport.parse(text, modulePath: module, root: Self.key(for: rootURL))
-        showCoverage = true
-    }
-
-    func clearCoverage() {
-        coverage = nil
     }
 
     private func consumeTestLine(_ line: String) {
         testReport.consume(line: line)
-        if !line.hasPrefix("{") { appendOutput(line + "\n") }
-        else if let data = line.data(using: .utf8),
-                let event = try? JSONDecoder().decode(GoTestEvent.self, from: data),
-                let text = event.output, event.action == "output" || event.action == "build-output" {
-            appendOutput(text)
-        }
+        appendOutput(line + "\n")
     }
 
-    /// Runs the test function around the caret, else the active file's package.
+    /// Module path of a file in its crate (`net::http`), the prefix of its tests' full names.
+    func testModulePath(for document: Document) -> String {
+        let path = Self.key(for: document.url)
+        let packageRoot = cargoMetadata?.package(containing: path).map { ($0.manifestPath as NSString).deletingLastPathComponent }
+            ?? rootURL.map(Self.key(for:)) ?? ""
+        return RustTestFinder.modulePath(ofFile: path, packageRoot: packageRoot)
+    }
+
+    /// The full name (`tests::adds`) of the #[test] around the caret, if any.
+    private func testAtCaret(in document: Document) -> String? {
+        guard document.isRust,
+              let test = RustTestFinder.enclosingTest(in: document.text, at: document.caretOffset) else { return nil }
+        return RustTestFinder.join(testModulePath(for: document), test.path)
+    }
+
+    /// Runs the #[test] around the caret, else the active file's package.
     func runTestAtCaret() {
         guard let document = activeDocument else { return runTests(.all) }
-        let dir = document.url.deletingLastPathComponent()
-        if document.name.hasSuffix("_test.go"),
-           let name = GoTestFinder.enclosingTest(in: document.text, at: document.caretOffset) {
-            runTests(.test(name, in: dir))
+        if let name = testAtCaret(in: document) {
+            runTests(.test(name, in: document.url))
         } else {
-            runTests(.package(dir))
+            runTests(.package(document.url))
         }
     }
 
     func runActivePackageTests() {
         guard let document = activeDocument else { return runTests(.all) }
-        runTests(.package(document.url.deletingLastPathComponent()))
+        runTests(.package(document.url))
     }
 
-    private func packagePattern(for dir: URL) -> String {
-        let relative = displayPath(Self.key(for: dir))
-        return relative == Self.key(for: dir) || relative.isEmpty ? "." : "./" + relative
+    /// Re-runs one test from the Tests panel (located by name in the project's sources).
+    func rerun(_ test: TestResult) {
+        if let file = locateTest(named: test.name)?.file {
+            runTests(.test(test.name, in: file))
+        } else if let lastTestScope {
+            runTests(lastTestScope)
+        }
     }
 
-    /// Opens a test function's declaration (searches the project's _test.go files).
+    /// Opens a test function's declaration.
     func revealTest(named name: String) {
-        guard let rootURL else { return }
-        let base = String(name.split(separator: "/").first ?? Substring(name))
-        for path in ProjectSearch.files(under: rootURL) where path.hasSuffix("_test.go") {
+        guard let found = locateTest(named: name) else { return }
+        navigate(to: found.file, position: TextPosition(line: found.line, character: 0))
+    }
+
+    /// Finds `#[test] fn` with this full module path among the project's .rs files (open buffers first).
+    private func locateTest(named name: String) -> (file: URL, line: Int)? {
+        guard let rootURL else { return nil }
+        let shortName = name.components(separatedBy: "::").last ?? name
+        var fallback: (file: URL, line: Int)?
+        for path in ProjectSearch.files(under: rootURL) where path.hasSuffix(".rs") {
             let key = Self.key(for: URL(fileURLWithPath: path))
-            let text = documents.first { Self.key(for: $0.url) == key }?.text
-                ?? (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-            if let found = GoTestFinder.testFunctions(in: text).first(where: { $0.name == base }) {
-                navigate(to: URL(fileURLWithPath: path), position: TextPosition(line: found.line, character: 5))
-                return
+            let open = documents.first { Self.key(for: $0.url) == key }
+            guard let text = open?.text ?? (try? String(contentsOfFile: path, encoding: .utf8)),
+                  text.contains(shortName) else { continue }
+            let packageRoot = cargoMetadata?.package(containing: key).map { ($0.manifestPath as NSString).deletingLastPathComponent }
+                ?? Self.key(for: rootURL)
+            let prefix = RustTestFinder.modulePath(ofFile: key, packageRoot: packageRoot)
+            for test in RustTestFinder.testFunctions(in: text) {
+                if RustTestFinder.join(prefix, test.path) == name { return (URL(fileURLWithPath: path), test.line) }
+                if fallback == nil, test.name == shortName { fallback = (URL(fileURLWithPath: path), test.line) }
             }
         }
+        return fallback
     }
 
     /// Opens `file.rs:line[:column]` from build / test output (resolved within the project).
@@ -1859,12 +1882,11 @@ final class Workspace {
     /// Debugs the test at the caret (in a _test.go file), else the active file's package (or the root).
     func startDebugging() {
         guard let rootURL else { return }
-        if let document = activeDocument, document.name.hasSuffix("_test.go"),
-           let name = GoTestFinder.enclosingTest(in: document.text, at: document.caretOffset) {
+        if let document = activeDocument, let name = testAtCaret(in: document) {
             debug(test: name, in: document.url.deletingLastPathComponent())
         } else if let config = selectedRunConfiguration {
             debug(configuration: config)
-        } else if let document = activeDocument, document.isRust, !document.name.hasSuffix("_test.go") {
+        } else if let document = activeDocument, document.isRust {
             debug(package: document.url.deletingLastPathComponent())
         } else {
             debug(package: rootURL)
@@ -1872,7 +1894,7 @@ final class Workspace {
     }
 
     func debug(package dir: URL) {
-        launchDebugger(title: packagePattern(for: dir), directory: dir, launch: [
+        launchDebugger(title: dir.lastPathComponent, directory: dir, launch: [
             "request": "launch", "mode": "debug", "program": .string(Self.key(for: dir)),
             "cwd": .string(Self.key(for: dir)), "outputMode": "remote",
         ])

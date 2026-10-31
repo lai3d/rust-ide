@@ -33,8 +33,9 @@ struct EditorServices {
 struct CodeEditorView: NSViewRepresentable {
     var text: String
     var highlightRust: Bool
-    var isTestFile = false
-    var testStatuses: [String: GoTestResult.Status] = [:]
+    /// Module path of the file (`net::http`) for full test names; nil hides test markers.
+    var testPathPrefix: String?
+    var testStatuses: [String: TestResult.Status] = [:]
     var breakpoints: Set<Int> = []
     var conditionalBreakpoints: Set<Int> = []
     var executionLine: Int?
@@ -1147,14 +1148,16 @@ struct CodeEditorView: NSViewRepresentable {
 
         private var testMarkerKey = ""
 
-        /// ▶ / ✓ / ✗ next to test functions in _test.go files.
+        /// ▶ / ✓ / ✗ next to #[test] functions.
         func updateTestMarkers(force: Bool = false) {
             guard let textView, let ruler else { return }
-            guard parent.isTestFile else {
+            guard let prefix = parent.testPathPrefix else {
                 if !ruler.testMarkers.isEmpty { ruler.testMarkers = [:] }
                 return
             }
-            let tests = GoTestFinder.testFunctions(in: textView.string)
+            let tests = RustTestFinder.testFunctions(in: textView.string).map {
+                (name: RustTestFinder.join(prefix, $0.path), line: $0.line)
+            }
             let key = tests.map { "\($0.name)@\($0.line):\(String(describing: parent.testStatuses[$0.name]))" }.joined(separator: ",")
             guard force || key != testMarkerKey else { return }
             testMarkerKey = key

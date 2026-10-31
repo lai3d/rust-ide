@@ -503,3 +503,55 @@ struct RustAnalyzerFixture {
         await workspace.shutdown()
     }
 }
+
+@MainActor
+@Suite struct WorkspaceCargoTestTests {
+    @Test(.enabled(if: RustIDECore.ToolLocator.find("cargo") != nil), .timeLimit(.minutes(3)))
+    func runsAllTestsThenTheOneAtTheCaret() async throws {
+        let lib = """
+            pub mod math;
+
+            #[cfg(test)]
+            mod tests {
+                #[test]
+                fn passes() {
+                    assert_eq!(1 + 1, 2);
+                }
+
+                #[test]
+                fn fails() {
+                    assert_eq!(1 + 1, 3, "math is broken");
+                }
+            }
+
+            """
+        let math = "pub fn double(x: i32) -> i32 {\n    x * 2\n}\n\n#[test]\nfn doubles() {\n    assert_eq!(double(2), 4);\n}\n"
+        let fixture = try RustAnalyzerFixture(["src/lib.rs": lib, "src/math.rs": math])
+        defer { fixture.remove() }
+        let workspace = Workspace()
+        await workspace.openFolder(fixture.dir)
+        func waitForRun() async throws {
+            for _ in 0..<1500 where workspace.isRunning { try await Task.sleep(for: .milliseconds(100)) }
+        }
+
+        workspace.runTests(.all)
+        try await waitForRun()
+        let report = workspace.testReport
+        #expect(Set(report.tests.map(\.name)) == ["tests::passes", "tests::fails", "math::doubles"], "\(workspace.output)")
+        #expect(report.failed == 1 && report.passed == 2)
+        #expect(workspace.selectedTestID == report.tests.first { $0.name == "tests::fails" }?.id)  // first failure selected
+        #expect(report.tests.first { $0.name == "tests::fails" }?.output.contains("math is broken") == true)
+        #expect(workspace.testStatuses["math::doubles"] == .passed)
+
+        // Caret inside `doubles` in src/math.rs: runs exactly that test, named with the file's module path.
+        let document = try #require(workspace.openFile(fixture.url("src/math.rs")))
+        #expect(workspace.testModulePath(for: document) == "math")
+        document.caretOffset = (math as NSString).range(of: "double(2)").location
+        workspace.runTestAtCaret()
+        try await waitForRun()
+        #expect(workspace.output.hasPrefix("$ cargo test -p fixture --lib -- math::doubles --exact"), "\(workspace.output)")
+        #expect(workspace.testReport.tests.map(\.name) == ["math::doubles"])
+        #expect(workspace.testReport.passed == 1)
+        await workspace.shutdown()
+    }
+}

@@ -15,7 +15,7 @@ final class LineNumberRulerView: NSView {
 
     struct TestMarker: Equatable {
         let name: String
-        let status: GoTestResult.Status?
+        let status: TestResult.Status?
     }
 
     /// Test functions per zero-based line: click to run.

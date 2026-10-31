@@ -21,7 +21,7 @@ language-specific layer.
 | 1.1 | ✅ rust-analyzer | Replaces gopls: settings, `experimental/serverStatus` ready state, rustfmt formatting, `target/` ignored; LSP tests on a shared Cargo-crate harness | 0.6h |
 | 1.2 | ✅ Rust highlighter | Hand-written lexer for Rust (lifetimes, raw strings, attributes, macros, nested block comments) under semantic tokens | 0.5h |
 | 1.3 | ✅ Cargo build / run / check | Cargo menu: run, build, check (⇧⌘B), clippy, fmt, doc, clean, dependencies; clickable `file.rs:L:C` in Output (rust-analyzer already feeds check diagnostics to Problems) | 0.6h |
-| 1.4 | ⬜ Cargo tests | `cargo test` runner, gutter ▶ / ✓ / ✗ per `#[test]`, run at cursor / module / all | 0.7h |
+| 1.4 | ✅ Cargo tests | libtest output parser (suites, ok / FAILED / ignored, captured failure output); `#[test]` finder with module paths; gutter ▶ / ✓ / ✗; run at caret (`-- path --exact` in the right `--lib` / `--bin` / `--test` target), package, all | 0.7h |
 | 1.5 | ⬜ Debugger (lldb-dap) | Replace Delve: launch the built binary / test binary under `xcrun lldb-dap`, Rust variable formatting | 1–1.5h |
 | 1.6 | ✅ Run configurations | Bins / examples from `cargo metadata` (refreshed when Cargo.toml changes), args, env, features, release profile | 0.5h |
 | 1.7 | ⬜ Snippets & settings | Rust snippets (`fn`, `test`, `impl`, `match`, …); cargo / rust-analyzer / lldb-dap path overrides | 0.4h |

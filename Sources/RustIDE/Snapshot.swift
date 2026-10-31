@@ -88,7 +88,7 @@ enum Snapshot {
                 try? await Task.sleep(for: .milliseconds(1200))
             }
             if args.contains("--snapshot-tests"), let workspace {
-                workspace.runTests(.all, coverage: args.contains("--snapshot-coverage"))
+                workspace.runTests(.all)
                 for _ in 0..<150 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
                 try? await Task.sleep(for: .milliseconds(500))
             }
