@@ -1797,9 +1797,18 @@ final class Workspace {
         return coverage.files[Self.key(for: document.url)]?.lines ?? [:]
     }
 
-    func runTestsWithCoverage() {
-        output = "Test coverage needs cargo-llvm-cov support, which isn't wired up yet.\n"
-        bottomTab = .output
+    /// cargo-llvm-cov (`cargo install cargo-llvm-cov`) is on PATH or in ~/.cargo/bin.
+    var canMeasureCoverage: Bool { ToolLocator.find("cargo-llvm-cov") != nil }
+
+    /// Cargo ▸ Test with Coverage: all tests under `cargo llvm-cov`, then line coverage in the editor.
+    func runTestsWithCoverage(_ scope: TestScope = .all) {
+        guard canMeasureCoverage else {
+            output = "Test coverage uses cargo-llvm-cov. Install it with:\n\n"
+                + "    rustup component add llvm-tools-preview\n    cargo install cargo-llvm-cov\n"
+            bottomTab = .output
+            return
+        }
+        runTests(scope, coverage: true)
     }
 
     func clearCoverage() {
@@ -1807,7 +1816,7 @@ final class Workspace {
     }
 
     /// Runs `cargo test` for a scope and streams libtest's results into `testReport`.
-    func runTests(_ scope: TestScope) {
+    func runTests(_ scope: TestScope, coverage measure: Bool = false) {
         guard let rootURL, !isRunning else { return }
         guard let cargo = ToolLocator.find("cargo") else {
             output = "cargo not found. Install Rust from https://rustup.rs\n"
@@ -1839,6 +1848,12 @@ final class Workspace {
         }
         let separator = arguments.firstIndex(of: "--") ?? arguments.endIndex
         arguments.insert(contentsOf: featureArguments(packages: Self.selectedPackages(in: arguments)), at: separator)
+        // `cargo llvm-cov` takes cargo test's arguments; it writes LCOV and passes the test output through.
+        let lcov = FileManager.default.temporaryDirectory.appendingPathComponent("rustide-cov-\(UUID().uuidString).lcov")
+        if measure, arguments.first == "test" {
+            arguments.replaceSubrange(0..<1, with: ["llvm-cov", "--lcov", "--output-path", lcov.path])
+            testRunTitle += " (coverage)"
+        }
         lastTestScope = scope
         testReport = CargoTestReport()
         selectedTestID = nil
@@ -1872,6 +1887,14 @@ final class Workspace {
                 self.appendOutput("\n[\(r.passed) passed, \(r.failed) failed, \(r.skipped) ignored — exit \(status)]\n")
                 if r.tests.isEmpty, status != 0 { self.bottomTab = .output }  // build failed
                 self.selectedTestID = self.selectedTestID ?? r.tests.first { $0.status == .failed }?.id
+                if measure, let text = try? String(contentsOf: lcov, encoding: .utf8) {
+                    try? FileManager.default.removeItem(at: lcov)
+                    self.coverage = CoverageReport.parseLCOV(text, root: rootURL.path)
+                    self.showCoverage = true
+                    if let coverage = self.coverage {
+                        self.appendOutput(String(format: "[line coverage %.1f%% in %d files]\n", coverage.percent, coverage.files.count))
+                    }
+                }
             }
         }
         do {

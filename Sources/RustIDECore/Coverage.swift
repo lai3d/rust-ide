@@ -1,10 +1,11 @@
 import Foundation
 
-/// A parsed `go test -coverprofile` file, mapped to files on disk.
+/// Line coverage from an LCOV file (`cargo llvm-cov --lcov`), for files in the project.
 public struct CoverageReport: Sendable, Hashable {
     public struct FileCoverage: Sendable, Hashable {
-        /// Zero-based line → covered (true) / not covered (false). Lines without statements are absent.
+        /// Zero-based line → covered (true) / not covered (false). Lines without code are absent.
         public var lines: [Int: Bool] = [:]
+        /// Instrumented lines and how many of them ran.
         public var statements = 0
         public var coveredStatements = 0
 
@@ -24,51 +25,39 @@ public struct CoverageReport: Sendable, Hashable {
 
     public init() {}
 
-    /// The `module` path declared in a go.mod file.
-    public static func modulePath(goMod: String) -> String? {
-        for line in goMod.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("module ") {
-                return trimmed.dropFirst("module ".count).trimmingCharacters(in: .whitespaces)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            }
-        }
-        return nil
-    }
-
-    /// Parses `file.go:startLine.startCol,endLine.endCol statements count` blocks.
-    /// Import paths under `modulePath` map into `root`; others are skipped.
-    public static func parse(_ profile: String, modulePath: String, root: String) -> CoverageReport {
+    /// Parses `SF:<path>` / `DA:<line>,<count>` / `end_of_record`. Files outside `root`
+    /// (dependencies, the standard library) are skipped. A line listed twice counts as covered
+    /// if any entry ran.
+    public static func parseLCOV(_ lcov: String, root: String) -> CoverageReport {
         var report = CoverageReport()
-        // A block can appear several times (e.g. once per test binary): keep the max count.
-        var blocks: [String: (statements: Int, count: Int, start: Int, end: Int)] = [:]
-        for line in profile.split(separator: "\n") where !line.hasPrefix("mode:") {
-            guard let colon = line.lastIndex(of: ":") else { continue }
-            let file = String(line[..<colon])
-            let fields = line[line.index(after: colon)...].split(separator: " ")
-            guard fields.count == 3, let statements = Int(fields[1]), let count = Int(fields[2]) else { continue }
-            let span = fields[0].split(separator: ",")
-            guard span.count == 2,
-                  let startLine = Int(span[0].split(separator: ".").first ?? ""),
-                  let endLine = Int(span[1].split(separator: ".").first ?? "")
-            else { continue }
-            let key = file + ":" + fields[0]
-            let previous = blocks[key]?.count ?? 0
-            blocks[key] = (statements, max(previous, count), startLine, endLine)
-        }
-        for (key, block) in blocks {
-            let importPath = String(key[..<key.lastIndex(of: ":")!])
-            guard importPath.hasPrefix(modulePath + "/") else { continue }
-            let path = (root as NSString).appendingPathComponent(String(importPath.dropFirst(modulePath.count + 1)))
-            var file = report.files[path, default: FileCoverage()]
-            file.statements += block.statements
-            if block.count > 0 { file.coveredStatements += block.statements }
-            for line in (block.start - 1)...(block.end - 1) {
-                // Covered wins when blocks overlap a line.
-                file.lines[line] = (file.lines[line] ?? false) || block.count > 0
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        var path: String?
+        var lines: [Int: Bool] = [:]
+        func flush() {
+            if let path, path.hasPrefix(prefix), !lines.isEmpty {
+                var file = report.files[path, default: FileCoverage()]
+                for (line, covered) in lines { file.lines[line] = (file.lines[line] ?? false) || covered }
+                file.statements = file.lines.count
+                file.coveredStatements = file.lines.values.filter { $0 }.count
+                report.files[path] = file
             }
-            report.files[path] = file
+            path = nil
+            lines = [:]
         }
+        for raw in lcov.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("SF:") {
+                flush()
+                path = String(line.dropFirst(3))
+            } else if line.hasPrefix("DA:") {
+                let fields = line.dropFirst(3).split(separator: ",")
+                guard fields.count >= 2, let number = Int(fields[0]), let count = Int(fields[1]), number > 0 else { continue }
+                lines[number - 1] = (lines[number - 1] ?? false) || count > 0
+            } else if line == "end_of_record" {
+                flush()
+            }
+        }
+        flush()
         return report
     }
 }

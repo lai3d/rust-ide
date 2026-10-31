@@ -794,3 +794,44 @@ struct RustAnalyzerFixture {
         await workspace.shutdown()
     }
 }
+
+@MainActor
+@Suite struct WorkspaceCoverageTests {
+    @Test(.enabled(if: RustIDECore.ToolLocator.find("cargo-llvm-cov") != nil), .timeLimit(.minutes(5)))
+    func measuresLineCoverageWithCargoLlvmCov() async throws {
+        let lib = """
+            pub fn used(x: i32) -> i32 {
+                x + 1
+            }
+
+            pub fn unused(x: i32) -> i32 {
+                x * 2
+            }
+
+            #[cfg(test)]
+            mod tests {
+                #[test]
+                fn covers_used() {
+                    assert_eq!(super::used(1), 2);
+                }
+            }
+
+            """
+        let fixture = try RustAnalyzerFixture(["src/lib.rs": lib])
+        defer { fixture.remove() }
+        let workspace = Workspace()
+        await workspace.openFolder(fixture.dir)
+        workspace.runTestsWithCoverage()
+        #expect(workspace.isRunning)
+        for _ in 0..<2400 where workspace.isRunning { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(workspace.output.hasPrefix("$ cargo llvm-cov --lcov --output-path"), "\(workspace.output)")
+        #expect(workspace.testReport.tests.map(\.name) == ["tests::covers_used"], "\(workspace.output)")
+        let coverage = try #require(workspace.coverage, "\(workspace.output)")
+        let file = try #require(coverage.files[fixture.url("src/lib.rs").path], "\(coverage.files.keys)")
+        #expect(file.lines[1] == true, "\(file.lines)")   // body of used()
+        #expect(file.lines[5] == false, "\(file.lines)")  // body of unused()
+        let document = try #require(workspace.openFile(fixture.url("src/lib.rs")))
+        #expect(workspace.coverageLines(for: document)[5] == false)
+        await workspace.shutdown()
+    }
+}

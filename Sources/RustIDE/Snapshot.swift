@@ -92,6 +92,11 @@ enum Snapshot {
                 workspace.sidebarMode = .cargo
                 try? await Task.sleep(for: .milliseconds(800))
             }
+            if args.contains("--snapshot-coverage"), let workspace {
+                workspace.runTestsWithCoverage()
+                for _ in 0..<600 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .milliseconds(800))
+            }
             if args.contains("--snapshot-tests"), let workspace {
                 workspace.runTests(.all)
                 for _ in 0..<150 where workspace.isRunning { try? await Task.sleep(for: .milliseconds(100)) }

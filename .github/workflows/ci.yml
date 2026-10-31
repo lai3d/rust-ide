@@ -15,9 +15,14 @@ jobs:
 
       - name: Rust toolchain + rust-analyzer
         run: |
-          rustup toolchain install stable --profile minimal --component rust-analyzer,rustfmt,rust-src,clippy
+          rustup toolchain install stable --profile minimal --component rust-analyzer,rustfmt,rust-src,clippy,llvm-tools-preview
           rustup default stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: cargo-llvm-cov (Test with Coverage)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
 
       - name: Allow debugging (lldb-dap)
         run: sudo DevToolsSecurity -enable || true
@@ -27,6 +32,7 @@ jobs:
           swift --version
           cargo --version
           rust-analyzer --version
+          cargo llvm-cov --version
           xcrun -f lldb-dap
 
       - name: Build

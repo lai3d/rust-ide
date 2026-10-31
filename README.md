@@ -9,15 +9,21 @@ language layer rebuilt around rust-analyzer, Cargo and LLDB.
 - **rust-analyzer**: diagnostics (with `cargo check` on save), completion with
   snippets, hover, signature help, go to definition / implementation / type definition,
   references, rename, assists and quick fixes, inlay hints, semantic highlighting,
-  call hierarchy, folding, outline, workspace symbols, rustfmt on save
+  call hierarchy, folding, outline, workspace symbols, rustfmt on save (respects `rustfmt.toml`),
+  `cargo check` or `cargo clippy` on save, Expand Macro (⌃⌥⌘M)
 - **Editor**: tabs, a hand-written Rust lexer (raw strings, lifetimes, nested comments),
   line numbers, breadcrumbs, auto-closing pairs, space indentation, Rust snippets,
   find / replace in project, Open Quickly (⌘P)
 - **Cargo**: Run (⌘R) with run configurations from `cargo metadata` (binaries and
   examples, args, env, features, release), Build (⌘B), Check (⇧⌘B), Clippy, fmt, doc,
   clean, update; `src/main.rs:12:5` locations in the output are clickable
+- **Cargo sidebar**: per-package feature toggles (applied to rust-analyzer and to build / check /
+  test), dependencies by kind with their Cargo.lock versions, `cargo add` / `remove` / `update`,
+  docs.rs and crates.io links
 - **Tests**: `cargo test` results per test (unit, integration, doc-tests), ▶ / ✓ / ✗ in
-  the gutter, run the test at the caret, failure output
+  the gutter, run the test at the caret, failure output; rust-analyzer runnables add ▶ on `main`,
+  doctests and benches and ⏩ on test modules; line coverage with
+  [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
 - **Debugger** (lldb-dap): breakpoints (conditional too), step, call stack, variables
   shown with rustc's formatters (`Vec`, `String`, `Option`…), watches, hover to evaluate;
   debug a run configuration or the `#[test]` at the caret
@@ -29,6 +35,8 @@ language layer rebuilt around rust-analyzer, Cargo and LLDB.
 - macOS 14+
 - A Rust toolchain from [rustup](https://rustup.rs), plus rust-analyzer:
   `rustup component add rust-analyzer`
+- Optional: `cargo install cargo-llvm-cov` (plus `rustup component add llvm-tools-preview`)
+  for Test with Coverage
 - For debugging: Xcode or the Command Line Tools (`lldb-dap`, found via `xcrun`).
   If macOS asks for permission each time you debug, enable developer mode:
   `sudo DevToolsSecurity -enable`

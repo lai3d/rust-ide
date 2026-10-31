@@ -35,7 +35,7 @@ language-specific layer.
 | 2.2 | ✅ Expand macro | Navigate ▸ Expand Macro (⌃⌥⌘M, also in the editor menu): `rust-analyzer/expandMacro` into a read-only, highlighted tab kept away from rust-analyzer. Function-like macros only: rust-analyzer 1.95 returns nothing for derives | 0.3h |
 | 2.3 | ✅ Cargo.toml tools | Sidebar ▸ Cargo: per-package features (toggles go to rust-analyzer `cargo.features` and build / check / clippy / test as `--features pkg/feat`, saved per project) and dependencies by kind with Cargo.lock versions; add (`cargo add`), remove, update, docs.rs / crates.io | 0.6h |
 | 2.4 | ✅ Runnables | rust-analyzer `experimental/runnables` in the gutter: ▶ on `main`, doctests and benches, ⏩ on test modules (next to the local #[test] markers); tests run in the Tests panel, the rest in Output | 0.5h |
-| 2.5 | ⬜ Coverage | `cargo llvm-cov` if installed | 0.5h |
+| 2.5 | ✅ Coverage | Cargo ▸ Test with Coverage runs `cargo llvm-cov --lcov` (if installed): green / red line tint, per-file and total line coverage in the Tests panel | 0.5h |
 
 **User must do manually** (duration outside Claude's control): Apple Developer Program enrollment,
 Developer ID certificate and notarization credentials, only to ship signed builds to others.

@@ -81,7 +81,7 @@ struct TestsPanel: View {
             if let coverage = workspace.coverage {
                 Text(String(format: "Coverage %.1f%%", coverage.percent))
                     .foregroundStyle(coverage.percent >= 70 ? .green : .orange)
-                    .help("Statement coverage of the last run")
+                    .help("Line coverage of the last run (cargo llvm-cov)")
             }
         }
         .font(.callout.monospacedDigit())
