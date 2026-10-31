@@ -607,7 +607,8 @@ struct RustAnalyzerFixture {
         // Run configuration: stop at `sum += i` when i == 3.
         workspace.setBreakpointConditionForTesting("i == 3", in: document, line: 3)
         workspace.debug(configuration: try #require(workspace.selectedRunConfiguration))
-        try await waitFor { workspace.debugSession?.state == .stopped || workspace.debugSession?.state == .terminated }
+        // The location arrives after the stopped event (stackTrace round trip): wait for it.
+        try await waitFor { workspace.executionLine(for: document) != nil || workspace.debugSession?.state == .terminated }
         let session = try #require(workspace.debugSession)
         #expect(session.state == .stopped, "\(workspace.output)")
         #expect(workspace.executionLine(for: document) == 3)
@@ -623,7 +624,7 @@ struct RustAnalyzerFixture {
         // A #[test]: built with cargo test --no-run, run alone under the debugger.
         workspace.toggleBreakpoint(in: document, line: 16)  // assert_eq!
         workspace.debug(test: "totals", in: document.url)
-        try await waitFor { workspace.debugSession !== session && workspace.debugSession?.state == .stopped }
+        try await waitFor { workspace.debugSession !== session && workspace.executionLine(for: document) != nil }
         #expect(workspace.executionLine(for: document) == 16, "\(workspace.output)")
         workspace.stopDebugging()
         try await waitFor { !workspace.isDebugging }
